@@ -1,4 +1,4 @@
-package gworkspace
+package adk
 
 import (
 	"context"

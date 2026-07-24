@@ -1,4 +1,4 @@
-package tuya
+package adk
 
 import (
 	"context"

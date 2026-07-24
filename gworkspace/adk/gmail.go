@@ -1,4 +1,4 @@
-package gworkspace
+package adk
 
 import (
 	"context"
@@ -58,15 +58,15 @@ func GmailTools(c GmailClient) ([]adktool.Tool, error) {
 		functiontool.Config{
 			Name: "read_messages",
 			Description: `WHEN TO USE:
-- Manusia meminta membaca email, mengecek kotak masuk, atau mencari pesan tertentu
-- Gunakan query Gmail (mis. "is:unread", "from:alice@example.com", "subject:invoice")
+- The human asks to read email, check their inbox, or find a specific message
+- Use a Gmail search query (e.g. "is:unread", "from:alice@example.com", "subject:invoice")
 
 HOW TO USE:
-- query: Gmail search query. Kosongkan untuk pesan terbaru.
-- limit: maksimum pesan yang dikembalikan. Default ke beberapa pesan saja — jangan ambil ratusan.
+- query: Gmail search query. Leave empty for the most recent messages.
+- limit: maximum messages to return. Default to just a few — don't pull hundreds.
 
 WHAT I GET BACK:
-- Daftar pesan dengan id, from, to, subject, snippet, body (plain text), date.`,
+- A list of messages with id, from, to, subject, snippet, body (plain text), date.`,
 		},
 		func(toolCtx adktool.Context, in readMsgsArgs) (msgsOutput, error) {
 			q := gworkspace.MessageQuery{
@@ -77,7 +77,7 @@ WHAT I GET BACK:
 			msgs, err := c.ReadMessages(toolCtx, toolCtx.UserID(), q)
 			if err != nil {
 				if errors.Is(err, gworkspace.ErrNotConnected) {
-					return msgsOutput{}, errors.New("manusia belum menghubungkan akun Gmail mereka — arahkan ke flow OAuth sebelum mengakses Gmail")
+					return msgsOutput{}, errors.New("the human hasn't connected their Gmail account yet — direct them to the OAuth flow before accessing Gmail")
 				}
 				return msgsOutput{}, err
 			}
@@ -104,16 +104,16 @@ WHAT I GET BACK:
 		functiontool.Config{
 			Name: "send_email",
 			Description: `WHEN TO USE:
-- Manusia meminta mengirim email
-- Konfirmasi penerima, subjek, dan isi sebelum mengirim jika belum eksplisit
+- The human asks to send an email
+- Confirm the recipient, subject, and body before sending if not already explicit
 
 HOW TO USE:
-- to: alamat email penerima (wajib)
-- subject: subjek email (wajib)
-- body: isi email plain text (wajib)
+- to: recipient email address (required)
+- subject: email subject (required)
+- body: plain-text email body (required)
 
 WHAT I GET BACK:
-- Konfirmasi pengiriman berhasil (ok: true). Error jika gagal.`,
+- Confirmation that the send succeeded (ok: true). An error if it failed.`,
 		},
 		func(toolCtx adktool.Context, in sendEmailArgs) (ack, error) {
 			if in.To == "" {
@@ -129,7 +129,7 @@ WHAT I GET BACK:
 			err := c.SendEmail(toolCtx, toolCtx.UserID(), in.To, in.Subject, in.Body)
 			if err != nil {
 				if errors.Is(err, gworkspace.ErrNotConnected) {
-					return ack{}, errors.New("manusia belum menghubungkan akun Gmail mereka — arahkan ke flow OAuth sebelum mengakses Gmail")
+					return ack{}, errors.New("the human hasn't connected their Gmail account yet — direct them to the OAuth flow before accessing Gmail")
 				}
 				return ack{}, err
 			}

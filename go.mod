@@ -1,10 +1,9 @@
-module go.naturallyfunny.dev/adk
+module go.naturallyfunny.dev/agentkit
 
 go 1.25.8
 
 require (
 	github.com/getzep/zep-go/v3 v3.20.0
-	github.com/openai/openai-go v1.12.0
 	github.com/zmb3/spotify/v2 v2.4.3
 	go.naturallyfunny.dev/gworkspace v0.4.0
 	go.naturallyfunny.dev/postera v0.18.0
@@ -35,10 +34,6 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.16 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/tidwall/gjson v1.14.4 // indirect
-	github.com/tidwall/match v1.1.1 // indirect
-	github.com/tidwall/pretty v1.2.1 // indirect
-	github.com/tidwall/sjson v1.2.5 // indirect
 	go.naturallyfunny.dev/tuya v0.5.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 // indirect

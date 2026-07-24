@@ -1,7 +1,7 @@
-// Package spotify exposes a Spotify client as a set of ADK tools, giving an
+// Package adk exposes a Spotify client as a set of ADK tools, giving an
 // agent its own hands on the music: hearing what is playing, finding tracks,
 // and driving playback on the human's devices.
-package spotify
+package adk
 
 import (
 	"errors"

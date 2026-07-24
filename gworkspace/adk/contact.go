@@ -1,4 +1,4 @@
-package gworkspace
+package adk
 
 import (
 	"context"
@@ -49,17 +49,17 @@ func ContactTools(c ContactClient) ([]adktool.Tool, error) {
 		functiontool.Config{
 			Name: "get_contacts",
 			Description: `WHEN TO USE:
-- Perlu mencari email atau nomor telepon seseorang di kontak manusia
-- Manusia menyebut nama orang tapi tidak memberikan email secara eksplisit
-- Sebelum add_event dengan tamu, untuk memastikan email tamu yang benar
+- I need to find someone's email or phone number in the human's contacts
+- The human names a person but doesn't give their email explicitly
+- Before add_event with guests, to confirm the correct guest emails
 
 HOW TO USE:
-- limit: maksimum kontak yang dikembalikan. Default ke semua kontak (Google limit berlaku).
-  Set limit kecil jika hanya butuh beberapa, untuk menghindari response besar.
+- limit: maximum contacts to return. Defaults to all contacts (Google's limit applies).
+  Set a small limit when only a few are needed, to avoid a large response.
 
 WHAT I GET BACK:
-- Daftar kontak dengan resource_name, name, emails, phones.
-  Gunakan email dari sini untuk mengisi tamu event atau penerima email.`,
+- A list of contacts with resource_name, name, emails, phones.
+  Use an email from here to fill in event guests or an email recipient.`,
 		},
 		func(toolCtx adktool.Context, in getContactsArgs) (contactsOutput, error) {
 			q := gworkspace.ContactQuery{
@@ -68,7 +68,7 @@ WHAT I GET BACK:
 			contacts, err := c.GetContacts(toolCtx, toolCtx.UserID(), q)
 			if err != nil {
 				if errors.Is(err, gworkspace.ErrNotConnected) {
-					return contactsOutput{}, errors.New("manusia belum menghubungkan akun Google mereka — arahkan ke flow OAuth sebelum mengakses Contacts")
+					return contactsOutput{}, errors.New("the human hasn't connected their Google account yet — direct them to the OAuth flow before accessing Contacts")
 				}
 				return contactsOutput{}, err
 			}
@@ -91,16 +91,16 @@ WHAT I GET BACK:
 		functiontool.Config{
 			Name: "add_contact",
 			Description: `WHEN TO USE:
-- Manusia meminta menyimpan kontak baru
-- Konfirmasi nama, email, dan telepon sebelum menyimpan
+- The human asks to save a new contact
+- Confirm the name, email, and phone before saving
 
 HOW TO USE:
-- name: nama lengkap orang (wajib)
-- emails: daftar alamat email (opsional tapi direkomendasikan)
-- phones: daftar nomor telepon (opsional)
+- name: the person's full name (required)
+- emails: list of email addresses (optional but recommended)
+- phones: list of phone numbers (optional)
 
 WHAT I GET BACK:
-- Kontak yang berhasil dibuat dengan resource_name-nya.`,
+- The created contact with its resource_name.`,
 		},
 		func(toolCtx adktool.Context, in addContactArgs) (contactView, error) {
 			if in.Name == "" {
@@ -116,7 +116,7 @@ WHAT I GET BACK:
 			created, err := c.AddContact(toolCtx, toolCtx.UserID(), input)
 			if err != nil {
 				if errors.Is(err, gworkspace.ErrNotConnected) {
-					return contactView{}, errors.New("manusia belum menghubungkan akun Google mereka — arahkan ke flow OAuth sebelum mengakses Contacts")
+					return contactView{}, errors.New("the human hasn't connected their Google account yet — direct them to the OAuth flow before accessing Contacts")
 				}
 				return contactView{}, err
 			}

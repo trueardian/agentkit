@@ -1,7 +1,7 @@
-// Package gworkspace exposes Google Workspace clients — Calendar, Gmail,
+// Package adk exposes Google Workspace clients — Calendar, Gmail,
 // Contacts — as ADK tools, giving an agent the ability to view and manage a
 // user's schedule, email, and contacts.
-package gworkspace
+package adk
 
 import (
 	"context"
@@ -65,18 +65,18 @@ func CalendarTools(c CalendarClient) ([]adktool.Tool, error) {
 		functiontool.Config{
 			Name: "get_events",
 			Description: `WHEN TO USE:
-- Manusia meminta jadwal, agenda, atau daftar event
-- Sebelum membuat event baru, untuk cek konflik waktu
-- Untuk mencari event berdasarkan kata kunci, rentang waktu, atau tamu
+- The human asks for their schedule, agenda, or a list of events
+- Before creating a new event, to check for time conflicts
+- To find events by keyword, time range, or attendee
 
 HOW TO USE:
-- query: teks pencarian bebas (nama event, lokasi, dll). Kosongkan jika tidak ada filter teks.
-- time_min / time_max: filter waktu, format RFC3339. time_min default ke sekarang jika kosong.
-- limit: maksimum event yang dikembalikan. Kosongkan untuk default Google.
+- query: free-text search (event name, location, etc.). Leave empty for no text filter.
+- time_min / time_max: time filter, RFC3339 format. time_min defaults to now if empty.
+- limit: maximum events to return. Leave empty for the Google default.
 
 WHAT I GET BACK:
-- Daftar event dengan id, summary, description, location, start, end, attendees, html_link.
-  Gunakan html_link untuk referensi ke event, id untuk operasi selanjutnya.`,
+- A list of events with id, summary, description, location, start, end, attendees, html_link.
+  Use html_link to reference an event, id for follow-up operations.`,
 		},
 		func(toolCtx adktool.Context, in getEventsArgs) (eventsOutput, error) {
 			var timeMin, timeMax time.Time
@@ -103,7 +103,7 @@ WHAT I GET BACK:
 			events, err := c.GetEvents(toolCtx, toolCtx.UserID(), q)
 			if err != nil {
 				if errors.Is(err, gworkspace.ErrNotConnected) {
-					return eventsOutput{}, errors.New("manusia belum menghubungkan akun Google mereka — arahkan ke flow OAuth sebelum mengakses Calendar")
+					return eventsOutput{}, errors.New("the human hasn't connected their Google account yet — direct them to the OAuth flow before accessing Calendar")
 				}
 				return eventsOutput{}, err
 			}
@@ -130,18 +130,18 @@ WHAT I GET BACK:
 		functiontool.Config{
 			Name: "add_event",
 			Description: `WHEN TO USE:
-- Manusia meminta membuat atau menjadwalkan event / meeting / janji
-- Konfirmasi detail (waktu, judul, tamu) sebelum membuat jika belum jelas
+- The human asks to create or schedule an event / meeting / appointment
+- Confirm the details (time, title, guests) before creating if not already clear
 
 HOW TO USE:
-- summary: judul event (wajib)
-- start / end: waktu mulai dan selesai, format RFC3339 (wajib)
-- description: keterangan event (opsional)
-- location: lokasi (opsional)
-- guests: daftar email tamu (opsional)
+- summary: event title (required)
+- start / end: start and end times, RFC3339 format (required)
+- description: event notes (optional)
+- location: location (optional)
+- guests: list of guest emails (optional)
 
 WHAT I GET BACK:
-- Event yang berhasil dibuat, termasuk html_link untuk dibagikan ke manusia.`,
+- The created event, including html_link to share back with the human.`,
 		},
 		func(toolCtx adktool.Context, in addEventArgs) (eventView, error) {
 			if in.Summary == "" {
@@ -176,7 +176,7 @@ WHAT I GET BACK:
 			created, err := c.AddEvent(toolCtx, toolCtx.UserID(), input)
 			if err != nil {
 				if errors.Is(err, gworkspace.ErrNotConnected) {
-					return eventView{}, errors.New("manusia belum menghubungkan akun Google mereka — arahkan ke flow OAuth sebelum mengakses Calendar")
+					return eventView{}, errors.New("the human hasn't connected their Google account yet — direct them to the OAuth flow before accessing Calendar")
 				}
 				return eventView{}, err
 			}

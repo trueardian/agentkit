@@ -1,4 +1,4 @@
-package postera
+package adk
 
 import (
 	"errors"

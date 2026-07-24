@@ -1,7 +1,7 @@
-// Package tuya exposes a Tuya Cloud client as a set of ADK tools, giving an
+// Package adk exposes a Tuya Cloud client as a set of ADK tools, giving an
 // agent its own hands on the human's smart home: seeing their devices, reading
 // what state each is in, and switching them on or off.
-package tuya
+package adk
 
 import (
 	"context"
@@ -23,6 +23,8 @@ type Client interface {
 	DeviceStatus(ctx context.Context, ownerID, deviceID string) ([]cloud.DataPoint, error)
 	SendCommands(ctx context.Context, ownerID, deviceID string, cmds []cloud.DataPoint) error
 }
+
+var _ Client = (*tuya.Client)(nil)
 
 // dataPointView is one Tuya data point (DP): a capability code and its value.
 // It is how a device reports state and how it's told to change — e.g.

@@ -30,8 +30,9 @@ first code block that makes the reader need to understand it. Avoid layouts that
 force readers to scroll down to discover a helper, then scroll back up to resume
 the main flow.
 
-Do not group all private helpers at the bottom by default. That style makes the
-file look tidy superficially, but it often makes the actual reading path worse.
+Do not group all private helpers at the bottom by default. Bottom-grouping buys a
+tidy file outline at the cost of the reading path; this codebase deliberately
+optimises for the reading path instead.
 
 ### Nearest dependency first
 
@@ -137,7 +138,7 @@ output types") — derive the order from the actual read path every time.
 
 ### Exported helpers that produce option values
 
-Functions like `StaticZone` or `ZoneFromContext` that exist to produce a value
+Functions like `StaticTZ` or `TZFromContext` that exist to produce a value
 passed into a `With*` option are **option helpers**, not config types. Place them
 **after the constructor**, grouped immediately before the `With*` option that
 consumes them:
