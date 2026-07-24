@@ -23,7 +23,7 @@ func TestToolsNilPostarius(t *testing.T) {
 }
 
 func TestToolsNames(t *testing.T) {
-	tools, err := Tools(newPostarius(&fakeStore{}, &fakeEnqueuer{}))
+	tools, err := Tools(newPostarius(t, &fakeStore{}, &fakeQueue{}))
 	if err != nil {
 		t.Fatalf("Tools: %v", err)
 	}
@@ -49,13 +49,16 @@ func TestTriggerAtDoc_LocalizationNote(t *testing.T) {
 	const note = "no conversion is needed"
 
 	t.Run("localized", func(t *testing.T) {
-		p := postera.New(&fakeStore{}, &fakeEnqueuer{}, postera.WithTimezoneFromContext(tzKey{}))
+		p, err := postera.New(&fakeStore{}, &fakeQueue{}, postera.WithTimezoneFromContext(tzKey{}))
+		if err != nil {
+			t.Fatalf("postera.New: %v", err)
+		}
 		if !strings.Contains(wakeDescription(t, p), note) {
 			t.Error("expected localization note when Postarius localizes from context")
 		}
 	})
 	t.Run("not_localized", func(t *testing.T) {
-		p := newPostarius(&fakeStore{}, &fakeEnqueuer{}) // fixed default zone, no context localization
+		p := newPostarius(t, &fakeStore{}, &fakeQueue{}) // fixed default zone, no context localization
 		if strings.Contains(wakeDescription(t, p), note) {
 			t.Error("did not expect localization note without context localization")
 		}
@@ -67,8 +70,8 @@ func TestTriggerAtDoc_LocalizationNote(t *testing.T) {
 // trigger_at rendered in Postera's TimeLayout.
 func TestWakeFutureSelfFlow(t *testing.T) {
 	store := &fakeStore{}
-	enq := &fakeEnqueuer{}
-	p := newPostarius(store, enq)
+	enq := &fakeQueue{}
+	p := newPostarius(t, store, enq)
 
 	const triggerAt = "2026-05-07T22:00:00"
 	result := runTool(t, p, "wake_future_self", map[string]any{
@@ -94,7 +97,7 @@ func TestWakeFutureSelfFlow(t *testing.T) {
 }
 
 func TestWakeFutureSelf_BadTriggerAt_Errors(t *testing.T) {
-	p := newPostarius(&fakeStore{}, &fakeEnqueuer{})
+	p := newPostarius(t, &fakeStore{}, &fakeQueue{})
 	_, err := runToolErr(t, p, "wake_future_self", map[string]any{
 		"message":    "whenever",
 		"trigger_at": "not-a-timestamp",
@@ -112,7 +115,7 @@ func TestListUpcomingFlow(t *testing.T) {
 		{ID: "pstr_1", Message: "first", TriggerAt: trigger, CreatedAt: trigger},
 		{ID: "pstr_2", Message: "second", TriggerAt: trigger, CreatedAt: trigger},
 	}}
-	p := newPostarius(store, &fakeEnqueuer{})
+	p := newPostarius(t, store, &fakeQueue{})
 
 	result := runTool(t, p, "list_upcoming_wakes", map[string]any{})
 	entries, ok := result["entries"].([]any)
@@ -137,8 +140,8 @@ func TestCancelFlow(t *testing.T) {
 			"pstr_1": {ID: "pstr_1", Message: "first", TriggerAt: trigger, CreatedAt: trigger},
 		},
 	}
-	enq := &fakeEnqueuer{}
-	p := newPostarius(store, enq)
+	enq := &fakeQueue{}
+	p := newPostarius(t, store, enq)
 
 	result := runTool(t, p, "cancel_upcoming_wake", map[string]any{"id": "pstr_1"})
 	if result["id"] != "pstr_1" || result["cancelled"] != true {
@@ -153,7 +156,7 @@ func TestCancelFlow(t *testing.T) {
 }
 
 func TestCancel_Unknown_Errors(t *testing.T) {
-	p := newPostarius(&fakeStore{byID: map[string]postera.Posterum{}}, &fakeEnqueuer{})
+	p := newPostarius(t, &fakeStore{byID: map[string]postera.Posterum{}}, &fakeQueue{})
 	_, err := runToolErr(t, p, "cancel_upcoming_wake", map[string]any{"id": "pstr_missing"})
 	if err == nil {
 		t.Fatal("expected error cancelling an unknown id, got nil")
@@ -164,8 +167,13 @@ func TestCancel_Unknown_Errors(t *testing.T) {
 
 // newPostarius builds a Postarius with a fixed UTC default zone, so trigger_at
 // parses and renders deterministically without a per-request timezone in context.
-func newPostarius(store postera.Store, enq postera.Enqueuer) *postera.Postarius {
-	return postera.New(store, enq, postera.WithDefaultTimezone(time.UTC))
+func newPostarius(t *testing.T, store postera.Store, queue postera.Queue) *postera.Postarius {
+	t.Helper()
+	p, err := postera.New(store, queue, postera.WithDefaultTimezone(time.UTC))
+	if err != nil {
+		t.Fatalf("postera.New: %v", err)
+	}
+	return p
 }
 
 func wakeDescription(t *testing.T, p *postera.Postarius) string {
@@ -251,17 +259,17 @@ func (s *fakeStore) List(_ context.Context, _ postera.Query) ([]postera.Posterum
 	return s.list, nil
 }
 
-type fakeEnqueuer struct {
+type fakeQueue struct {
 	enqueued  []postera.Posterum
 	cancelled map[string]bool
 }
 
-func (e *fakeEnqueuer) Enqueue(_ context.Context, p postera.Posterum) error {
+func (e *fakeQueue) Enqueue(_ context.Context, p postera.Posterum) error {
 	e.enqueued = append(e.enqueued, p)
 	return nil
 }
 
-func (e *fakeEnqueuer) Cancel(_ context.Context, id string) error {
+func (e *fakeQueue) Cancel(_ context.Context, id string) error {
 	if e.cancelled == nil {
 		e.cancelled = map[string]bool{}
 	}

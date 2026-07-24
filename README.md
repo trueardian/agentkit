@@ -479,7 +479,7 @@ one held to 80%+.
 | `go.naturallyfunny.dev/gworkspace` | v0.4.0  | Workspace client                  |
 | `go.naturallyfunny.dev/spotify`  | v0.6.0    | Spotify client                    |
 | `go.naturallyfunny.dev/tuya`     | v0.5.0    | Tuya client                       |
-| `go.naturallyfunny.dev/postera`  | v0.18.0   | Prospective-memory client         |
+| `go.naturallyfunny.dev/postera`  | v0.22.0   | Prospective-memory client         |
 
 Because each binding is independent, importing (say) only `spotify/adk` links only
 the Spotify and ADK trees — the Zep and Workspace SDKs stay out of your binary.
