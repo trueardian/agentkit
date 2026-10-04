@@ -7,7 +7,7 @@ import (
 	adktool "google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
-	"go.naturallyfunny.dev/postera"
+	"go.trueardian.com/postera"
 )
 
 type posterumView struct {

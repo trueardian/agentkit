@@ -9,7 +9,7 @@ import (
 	adktool "google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
-	"go.naturallyfunny.dev/spotify"
+	"go.trueardian.com/spotify"
 )
 
 type trackView struct {

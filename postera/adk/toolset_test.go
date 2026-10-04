@@ -13,7 +13,7 @@ import (
 	"google.golang.org/adk/tool/toolconfirmation"
 	"google.golang.org/genai"
 
-	"go.naturallyfunny.dev/postera"
+	"go.trueardian.com/postera"
 )
 
 func TestToolsNilPostarius(t *testing.T) {

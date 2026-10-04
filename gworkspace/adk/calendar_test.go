@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"go.naturallyfunny.dev/gworkspace"
+	"go.trueardian.com/gworkspace"
 )
 
 // Compile-time check to verify *gworkspace.Calendar satisfies CalendarClient.

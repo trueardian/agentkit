@@ -7,7 +7,7 @@ import (
 
 	"github.com/getzep/zep-go/v3/client"
 	"github.com/getzep/zep-go/v3/option"
-	zep "go.naturallyfunny.dev/agentkit/zep/adk"
+	zep "go.trueardian.com/agentkit/zep/adk"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/genai"

@@ -1,6 +1,6 @@
 # agentkit
 
-[![Go Reference](https://pkg.go.dev/badge/go.naturallyfunny.dev/agentkit.svg)](https://pkg.go.dev/go.naturallyfunny.dev/agentkit)
+[![Go Reference](https://pkg.go.dev/badge/go.trueardian.com/agentkit.svg)](https://pkg.go.dev/go.trueardian.com/agentkit)
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](go.mod)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -14,7 +14,7 @@ carries that knowledge in a layer of its own, one binding per framework.
   (its own module, no agent deps)      (this module, thin)             (Google ADK today)
  ┌───────────────────────────┐   ┌───────────────────────────┐   ┌──────────────────────┐
  │ spotify.Client            │   │ spotify/adk.Tools(c)       │   │                      │
- │ tuya.Client               │──▶│ tuya/adk.Tools(c)          │──▶│ []adktool.Tool       │
+ │ tuya/appaccount.Service   │──▶│ tuya/adk.Tools(c)          │──▶│ []adktool.Tool       │
  │ gworkspace.{Gmail,…}      │   │ gworkspace/adk.*Tools(c)   │   │ adksession.Service   │
  │ postera.Postarius         │   │ postera/adk.Tools(p)       │   │ memory.Service       │
  │ zep client                │   │ zep/adk.New*Service(c)     │   │                      │
@@ -54,7 +54,7 @@ backend with one call. That is the pattern every decision below optimizes for.
 
 **The clients are not ours to bend, and the framework is not theirs to know.**
 
-Each underlying client (`go.naturallyfunny.dev/spotify`, `/gworkspace`, `/tuya`,
+Each underlying client (`go.trueardian.com/spotify`, `/gworkspace`, `/tuya`,
 `/postera`, and the Zep SDK) is a standalone module with no dependency on any
 agent framework. That is deliberate: the client is reusable from an HTTP handler,
 a cron job, or a CLI, and it stays testable without pulling ADK's dependency tree.
@@ -78,7 +78,7 @@ constructor that takes an already-configured client and returns framework types.
 | ---------------- | --------------------------- | ------------------------------------------------------ | ------------------------------------ |
 | `gworkspace/adk` | `*gworkspace.{Gmail,…}`     | Gmail, Calendar, Contacts as tools (6 tools)           | `GmailTools`, `CalendarTools`, `ContactTools` |
 | `spotify/adk`    | `*spotify.Client`           | Search + playback control as tools (11 tools)          | `Tools`                              |
-| `tuya/adk`       | a `tuya.Client`             | Smart-home read/control as tools (4 tools)             | `Tools`, `Client`                    |
+| `tuya/adk`       | `*appaccount.Service`       | Smart-home read/control as tools (4 tools)             | `Tools`, `Client`                    |
 | `postera/adk`    | `*postera.Postarius`        | "Wake your future self" scheduling as tools (3 tools)  | `Tools`                              |
 | `zep/adk`        | a Zep `*client.Client`      | ADK session backend **and** user-graph memory backend  | `NewSessionService`, `NewMemoryService` |
 
@@ -93,13 +93,13 @@ threads with an ownership guard, a time harness, and speaker attribution, plus
 ## Install
 
 ```bash
-go get go.naturallyfunny.dev/agentkit
+go get go.trueardian.com/agentkit
 ```
 
 Requires **Go 1.25+** (module `go` directive is `go 1.25.8`). Import only the
 subpackages you need; unused bindings pull in no transitive dependencies.
 
-Full API reference: [`pkg.go.dev/go.naturallyfunny.dev/agentkit`][godoc], or locally:
+Full API reference: [`pkg.go.dev/go.trueardian.com/agentkit`][godoc], or locally:
 
 ```bash
 go doc ./zep/adk
@@ -124,7 +124,7 @@ import (
 
 	"github.com/getzep/zep-go/v3/client"
 	"github.com/getzep/zep-go/v3/option"
-	zep "go.naturallyfunny.dev/agentkit/zep/adk"
+	zep "go.trueardian.com/agentkit/zep/adk"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/genai"
@@ -226,16 +226,16 @@ that, not the concrete client. `tuya/adk.Client` lists four methods; `zep/adk`'s
 `threadClient` lists the three thread calls it makes — no more.
 
 ```go
-// tuya/adk: the binding drives exactly this surface; *tuya.Client satisfies it.
+// tuya/adk: the binding drives exactly this surface; *appaccount.Service satisfies it.
 type Client interface {
-	Account(ctx context.Context, ownerID string) (tuya.Account, error)
-	ListDevices(ctx context.Context, ownerID string) ([]cloud.Device, error)
-	DeviceStatus(ctx context.Context, ownerID, deviceID string) ([]cloud.DataPoint, error)
-	SendCommands(ctx context.Context, ownerID, deviceID string, cmds []cloud.DataPoint) error
+	Get(ctx context.Context, owner string) (appaccount.Account, error)
+	Devices(ctx context.Context, owner string, opts ...tuya.DeviceOption) ([]tuya.UserDevice, error)
+	DeviceStatus(ctx context.Context, deviceID string) ([]tuya.DataPoint, error)
+	SendCommands(ctx context.Context, deviceID string, commands []tuya.DataPoint) error
 }
 ```
 
-**Alternative.** Accept the concrete `*tuya.Client` / `*zep.client.Client`
+**Alternative.** Accept the concrete `*appaccount.Service` / `*zep.client.Client`
 directly.
 
 **Why.** Two payoffs, both idiomatic Go. Tests inject a tiny fake instead of
@@ -244,7 +244,7 @@ against a network SDK — see [Verification](#verification)). And the interface
 documents the binding's true blast radius: a reviewer sees precisely which client
 methods it can call. The interface is defined by the *consumer* per
 [Go's interface guidance][accept-interfaces]. A compile-time
-`var _ Client = (*tuya.Client)(nil)` assertion keeps the concrete type honest.
+`var _ Client = (*appaccount.Service)(nil)` assertion keeps the concrete type honest.
 
 ### 4. Fail at wiring time, not on the first call
 
@@ -456,7 +456,7 @@ go test ./... -cover
 | `zep/adk`        |  ✅   | **81.4%** | Ownership matrix, time harness, speaker attribution, blank filtering  |
 | `postera/adk`    |  ✅   | **87.1%** | All three tools end-to-end via fakes + the localization-doc branch    |
 | `spotify/adk`    |  ✅   | 49.0%    | `httptest`-driven flow through the real client; error translation     |
-| `tuya/adk`       |  ✅   | 29.4%    | Registration, tool names, error translation                           |
+| `tuya/adk`       |  ✅   | 28.0%    | Registration, tool names, error translation                           |
 | `gworkspace/adk` |  ✅   | 25.8%    | Registration, tool names, interface-satisfaction assertions           |
 
 **Honest gaps.** `gworkspace/adk` and `tuya/adk` test tool registration, the
@@ -476,10 +476,10 @@ one held to 80%+.
 | `google.golang.org/adk`          | v1.2.0    | Target agent framework            |
 | `google.golang.org/genai`        | v1.54.0   | Content/part types ADK speaks     |
 | `github.com/getzep/zep-go/v3`    | v3.20.0   | Zep client (session + memory)     |
-| `go.naturallyfunny.dev/gworkspace` | v0.4.0  | Workspace client                  |
-| `go.naturallyfunny.dev/spotify`  | v0.6.0    | Spotify client                    |
-| `go.naturallyfunny.dev/tuya`     | v0.5.0    | Tuya client                       |
-| `go.naturallyfunny.dev/postera`  | v0.22.0   | Prospective-memory client         |
+| `go.trueardian.com/gworkspace`   | v0.8.0    | Workspace client                  |
+| `go.trueardian.com/spotify`      | v0.10.0   | Spotify client                    |
+| `go.trueardian.com/tuya`         | v0.10.0   | Tuya client                       |
+| `go.trueardian.com/postera`      | v0.23.0   | Prospective-memory client         |
 
 Because each binding is independent, importing (say) only `spotify/adk` links only
 the Spotify and ADK trees — the Zep and Workspace SDKs stay out of your binary.
@@ -508,7 +508,7 @@ agentkit/
 [MIT](LICENSE) © 2026 Ardian
 
 [adk]: https://google.github.io/adk-docs/
-[godoc]: https://pkg.go.dev/go.naturallyfunny.dev/agentkit
+[godoc]: https://pkg.go.dev/go.trueardian.com/agentkit
 [proverbs]: https://go-proverbs.github.io/
 [accept-interfaces]: https://go.dev/wiki/CodeReviewComments#interfaces
 [loadlocation]: https://pkg.go.dev/time#LoadLocation

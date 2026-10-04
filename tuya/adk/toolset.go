@@ -10,21 +10,21 @@ import (
 	adktool "google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
-	"go.naturallyfunny.dev/tuya"
-	"go.naturallyfunny.dev/tuya/cloud"
+	"go.trueardian.com/tuya"
+	"go.trueardian.com/tuya/appaccount"
 )
 
-// Client is the owner-keyed surface the toolset drives. tuya.Client satisfies it.
-// Every method takes the human's owner id (toolCtx.UserID()); the implementation
-// resolves the Tuya UID and enforces ownership.
+// Client is the surface the toolset drives. appaccount.Service satisfies it.
+// Get and Devices take the human's owner id (toolCtx.UserID()) and resolve it to
+// their Tuya UID; DeviceStatus and SendCommands address the device directly.
 type Client interface {
-	Account(ctx context.Context, ownerID string) (tuya.Account, error)
-	ListDevices(ctx context.Context, ownerID string) ([]cloud.Device, error)
-	DeviceStatus(ctx context.Context, ownerID, deviceID string) ([]cloud.DataPoint, error)
-	SendCommands(ctx context.Context, ownerID, deviceID string, cmds []cloud.DataPoint) error
+	Get(ctx context.Context, owner string) (appaccount.Account, error)
+	Devices(ctx context.Context, owner string, opts ...tuya.DeviceOption) ([]tuya.UserDevice, error)
+	DeviceStatus(ctx context.Context, deviceID string) ([]tuya.DataPoint, error)
+	SendCommands(ctx context.Context, deviceID string, commands []tuya.DataPoint) error
 }
 
-var _ Client = (*tuya.Client)(nil)
+var _ Client = (*appaccount.Service)(nil)
 
 // dataPointView is one Tuya data point (DP): a capability code and its value.
 // It is how a device reports state and how it's told to change — e.g.
@@ -44,11 +44,11 @@ type channelView struct {
 // deviceView is a device with its current state and, for multi-gang
 // switches/outlets, the human's per-channel names.
 type deviceView struct {
-	ID              string          `json:"id"`
-	Category        string          `json:"category"`
-	Name            string          `json:"name"`
-	Status          []dataPointView `json:"status"`
-	CodeNameMapping []channelView   `json:"code_name_mapping"`
+	ID       string          `json:"id"`
+	Category string          `json:"category"`
+	Name     string          `json:"name"`
+	Status   []dataPointView `json:"status"`
+	Channels []channelView   `json:"channels"`
 }
 
 // accountView reports the human's linked Tuya account.
@@ -104,7 +104,7 @@ WHAT I GET BACK:
   before I can see or control any device.`,
 		},
 		func(toolCtx adktool.Context, _ noArgs) (accountView, error) {
-			acc, err := c.Account(toolCtx, toolCtx.UserID())
+			acc, err := c.Get(toolCtx, toolCtx.UserID())
 			if err != nil {
 				return accountView{}, forAgent(err)
 			}
@@ -127,11 +127,11 @@ WHEN TO USE:
 
 WHAT I GET BACK:
 - Each device carries its id, category, status (data points), and — for
-  multi-gang switches/outlets — code_name_mapping linking each switch to its
-  label. Always use the exact id from here; a wrong id is fatal.`,
+  multi-gang switches/outlets — channels linking each switch to its label.
+  Always use the exact id from here; a wrong id is fatal.`,
 		},
 		func(toolCtx adktool.Context, _ noArgs) (devicesOutput, error) {
-			devices, err := c.ListDevices(toolCtx, toolCtx.UserID())
+			devices, err := c.Devices(toolCtx, toolCtx.UserID(), tuya.WithChannelNames())
 			if err != nil {
 				return devicesOutput{}, forAgent(err)
 			}
@@ -158,7 +158,7 @@ WHAT I GET BACK:
 - The device's data points (code + value), e.g. switch_1=true, bright_value=600.`,
 		},
 		func(toolCtx adktool.Context, in deviceIDArgs) (statusOutput, error) {
-			status, err := c.DeviceStatus(toolCtx, toolCtx.UserID(), in.DeviceID)
+			status, err := c.DeviceStatus(toolCtx, in.DeviceID)
 			if err != nil {
 				return statusOutput{}, forAgent(err)
 			}
@@ -183,12 +183,10 @@ HOW TO USE:
 - commands: a list of data points to set, each a code and value, e.g.
   [{"code": "switch_1", "value": true}] to switch on, or
   [{"code": "bright_value", "value": 600}] to set brightness. Read a device's
-  status or code_name_mapping first if I'm unsure which code does what.
-
-I can only drive devices on the human's own account; trying another is refused.`,
+  status or channels first if I'm unsure which code does what.`,
 		},
 		func(toolCtx adktool.Context, in sendCommandsArgs) (ack, error) {
-			if err := c.SendCommands(toolCtx, toolCtx.UserID(), in.DeviceID, toDataPoints(in.Commands)); err != nil {
+			if err := c.SendCommands(toolCtx, in.DeviceID, toDataPoints(in.Commands)); err != nil {
 				return ack{}, forAgent(err)
 			}
 			return ack{OK: true}, nil
@@ -211,20 +209,18 @@ I can only drive devices on the human's own account; trying another is refused.`
 // should know what to do next.
 func forAgent(err error) error {
 	switch {
-	case errors.Is(err, tuya.ErrAccountNotLinked):
+	case errors.Is(err, appaccount.ErrNotLinked):
 		return errors.New("the human hasn't linked their Tuya account yet — they need to link it before I can see or control any device")
-	case errors.Is(err, tuya.ErrDeviceNotOwned):
-		return errors.New("that device isn't on the human's Tuya account — I can only act on their own devices; double-check the id with list_devices")
 	default:
 		return err
 	}
 }
 
-func toDataPointView(d cloud.DataPoint) dataPointView {
+func toDataPointView(d tuya.DataPoint) dataPointView {
 	return dataPointView{Code: d.Code, Value: d.Value}
 }
 
-func toDataPointViews(dps []cloud.DataPoint) []dataPointView {
+func toDataPointViews(dps []tuya.DataPoint) []dataPointView {
 	views := make([]dataPointView, len(dps))
 	for i, d := range dps {
 		views[i] = toDataPointView(d)
@@ -232,15 +228,15 @@ func toDataPointViews(dps []cloud.DataPoint) []dataPointView {
 	return views
 }
 
-func toDataPoints(views []dataPointView) []cloud.DataPoint {
-	dps := make([]cloud.DataPoint, len(views))
+func toDataPoints(views []dataPointView) []tuya.DataPoint {
+	dps := make([]tuya.DataPoint, len(views))
 	for i, v := range views {
-		dps[i] = cloud.DataPoint{Code: v.Code, Value: v.Value}
+		dps[i] = tuya.DataPoint{Code: v.Code, Value: v.Value}
 	}
 	return dps
 }
 
-func toChannelViews(channels []cloud.Channel) []channelView {
+func toChannelViews(channels []tuya.Channel) []channelView {
 	views := make([]channelView, len(channels))
 	for i, ch := range channels {
 		views[i] = channelView{Identifier: ch.Identifier, Name: ch.Name}
@@ -248,15 +244,15 @@ func toChannelViews(channels []cloud.Channel) []channelView {
 	return views
 }
 
-func toDeviceViews(devices []cloud.Device) []deviceView {
+func toDeviceViews(devices []tuya.UserDevice) []deviceView {
 	views := make([]deviceView, len(devices))
 	for i, d := range devices {
 		views[i] = deviceView{
-			ID:              d.ID,
-			Category:        d.Category,
-			Name:            d.Name,
-			Status:          toDataPointViews(d.Status),
-			CodeNameMapping: toChannelViews(d.CodeNameMapping),
+			ID:       d.ID,
+			Category: d.Category,
+			Name:     d.Name,
+			Status:   toDataPointViews(d.Status),
+			Channels: toChannelViews(d.Channels),
 		}
 	}
 	return views

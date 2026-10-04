@@ -7,7 +7,7 @@ import (
 	adktool "google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
-	"go.naturallyfunny.dev/gworkspace"
+	"go.trueardian.com/gworkspace"
 )
 
 type contactView struct {

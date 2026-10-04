@@ -1,13 +1,13 @@
-module go.naturallyfunny.dev/agentkit
+module go.trueardian.com/agentkit
 
 go 1.25.8
 
 require (
 	github.com/getzep/zep-go/v3 v3.20.0
 	github.com/zmb3/spotify/v2 v2.4.3
-	go.naturallyfunny.dev/gworkspace v0.4.0
-	go.naturallyfunny.dev/postera v0.22.0
-	go.naturallyfunny.dev/spotify v0.6.0
+	go.trueardian.com/gworkspace v0.8.0
+	go.trueardian.com/postera v0.23.0
+	go.trueardian.com/spotify v0.10.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/adk v1.2.0
 	google.golang.org/genai v1.54.0
@@ -34,13 +34,13 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.16 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	go.naturallyfunny.dev/tuya v0.5.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 // indirect
 	go.opentelemetry.io/otel v1.43.0 // indirect
 	go.opentelemetry.io/otel/log v0.16.0 // indirect
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
+	go.trueardian.com/tuya v0.10.0
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect

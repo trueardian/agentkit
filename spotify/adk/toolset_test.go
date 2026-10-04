@@ -19,7 +19,7 @@ import (
 	"google.golang.org/adk/tool/toolconfirmation"
 	"google.golang.org/genai"
 
-	"go.naturallyfunny.dev/spotify"
+	"go.trueardian.com/spotify"
 )
 
 func TestToolsNilClient(t *testing.T) {
@@ -228,6 +228,8 @@ func (s *fakeStore) GetRefreshToken(_ context.Context, userID string) (string, e
 }
 
 func (s *fakeStore) SaveRefreshToken(_ context.Context, _, _ string) error { return nil }
+
+func (s *fakeStore) DeleteRefreshToken(_ context.Context, _ string) error { return nil }
 
 // testContext is a minimal adktool.Context for exercising tool handlers. It
 // embeds the harness context so oauth2 picks up the test HTTP client, and
