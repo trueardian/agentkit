@@ -46,6 +46,8 @@ type CalendarClient interface {
 	AddEvent(ctx context.Context, ownerID string, in gworkspace.EventInput) (gworkspace.Event, error)
 }
 
+var _ CalendarClient = (*gworkspace.Calendar)(nil)
+
 // CalendarTools returns the Google Calendar toolset bound to c. It errors if
 // c is nil.
 func CalendarTools(c CalendarClient) ([]adktool.Tool, error) {

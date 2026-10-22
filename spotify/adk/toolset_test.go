@@ -3,14 +3,8 @@ package adk
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
-
-	spotifyauth "github.com/zmb3/spotify/v2/auth"
-	"golang.org/x/oauth2"
 
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/memory"
@@ -29,7 +23,7 @@ func TestToolsNilClient(t *testing.T) {
 }
 
 func TestToolsNames(t *testing.T) {
-	tools, err := Tools(spotify.New(&fakeStore{}, testAuth()))
+	tools, err := Tools(&stubClient{})
 	if err != nil {
 		t.Fatalf("Tools: %v", err)
 	}
@@ -103,23 +97,10 @@ func TestToPlaybackView(t *testing.T) {
 	}
 }
 
-// TestSearchTracksFlow drives search_tracks end to end against a fake Spotify,
-// proving the tool maps results and threads the invocation's UserID through to
-// the token store.
 func TestSearchTracksFlow(t *testing.T) {
-	store := &fakeStore{}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/token", writeToken)
-	mux.HandleFunc("/v1/search", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, `{"tracks":{"items":[
-			{"id":"t1","name":"Song One","uri":"spotify:track:t1",
-			 "external_urls":{"spotify":"https://open.spotify.com/track/t1"},
-			 "artists":[{"name":"Artist A"}]}
-		]}}`)
-	})
-	client, ctx := newTestClient(t, store, mux)
+	c := &stubClient{tracks: []spotify.Track{{ID: "t1", Name: "Song One", URI: "spotify:track:t1"}}}
 
-	result, err := runTool(t, client, ctx, "user-123", "search_tracks", map[string]any{"query": "song one"})
+	result, err := runTool(t, c, "user-123", "search_tracks", map[string]any{"query": "song one"})
 	if err != nil {
 		t.Fatalf("search_tracks: %v", err)
 	}
@@ -127,23 +108,15 @@ func TestSearchTracksFlow(t *testing.T) {
 	if !ok || len(tracks) != 1 {
 		t.Fatalf("tracks = %#v, want one entry", result["tracks"])
 	}
-	if store.gotUserID != "user-123" {
-		t.Errorf("token store queried for %q, want %q", store.gotUserID, "user-123")
+	if c.gotUserID != "user-123" {
+		t.Errorf("client called for %q, want %q", c.gotUserID, "user-123")
 	}
 }
 
-// TestSetVolumePremiumError proves a Spotify 403 surfaces to the agent as the
-// translated Premium guidance, not a raw HTTP error.
 func TestSetVolumePremiumError(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/token", writeToken)
-	mux.HandleFunc("/v1/me/player/volume", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		writeJSON(w, `{"error":{"status":403,"message":"Player command failed: Premium required","reason":"PREMIUM_REQUIRED"}}`)
-	})
-	client, ctx := newTestClient(t, &fakeStore{}, mux)
+	c := &stubClient{err: spotify.ErrPremiumRequired}
 
-	_, err := runTool(t, client, ctx, "user-1", "set_volume", map[string]any{"percent": 50})
+	_, err := runTool(t, c, "user-1", "set_volume", map[string]any{"percent": 50})
 	if err == nil {
 		t.Fatal("set_volume: want error, got nil")
 	}
@@ -152,11 +125,44 @@ func TestSetVolumePremiumError(t *testing.T) {
 	}
 }
 
-// --- helpers ---
+type stubClient struct {
+	tracks    []spotify.Track
+	err       error
+	gotUserID string
+}
 
-func runTool(t *testing.T, client *spotify.Client, ctx context.Context, userID, name string, args map[string]any) (map[string]any, error) {
+func (c *stubClient) SearchTracks(_ context.Context, userID, _ string) ([]spotify.Track, error) {
+	c.gotUserID = userID
+	return c.tracks, c.err
+}
+func (c *stubClient) UserPlaylists(context.Context, string) ([]spotify.Playlist, error) {
+	return nil, c.err
+}
+func (c *stubClient) PlaylistTracks(context.Context, string, string) ([]spotify.Track, error) {
+	return c.tracks, c.err
+}
+func (c *stubClient) CurrentPlayback(context.Context, string) (*spotify.Playback, error) {
+	return nil, c.err
+}
+func (c *stubClient) Devices(context.Context, string) ([]spotify.Device, error) { return nil, c.err }
+func (c *stubClient) Play(context.Context, string, spotify.PlayRequest) error   { return c.err }
+func (c *stubClient) TransferPlayback(context.Context, string, string, bool) error {
+	return c.err
+}
+func (c *stubClient) Pause(context.Context, string) error          { return c.err }
+func (c *stubClient) Next(context.Context, string) error           { return c.err }
+func (c *stubClient) Previous(context.Context, string) error       { return c.err }
+func (c *stubClient) SetVolume(context.Context, string, int) error { return c.err }
+
+// runnableTool mirrors the unexported interface the ADK uses to invoke a tool,
+// letting the tests call a tool the way the framework does.
+type runnableTool interface {
+	Run(ctx adktool.Context, args any) (map[string]any, error)
+}
+
+func runTool(t *testing.T, c Client, userID, name string, args map[string]any) (map[string]any, error) {
 	t.Helper()
-	tools, err := Tools(client)
+	tools, err := Tools(c)
 	if err != nil {
 		t.Fatalf("Tools: %v", err)
 	}
@@ -166,74 +172,15 @@ func runTool(t *testing.T, client *spotify.Client, ctx context.Context, userID, 
 			if !ok {
 				t.Fatalf("tool %q is not runnable", name)
 			}
-			return runner.Run(&testContext{Context: ctx, userID: userID}, args)
+			return runner.Run(&testContext{Context: context.Background(), userID: userID}, args)
 		}
 	}
 	t.Fatalf("tool %q not found", name)
 	return nil, nil
 }
 
-// runnableTool mirrors the unexported interface the ADK uses to invoke a tool,
-// letting the tests call a tool the way the framework does.
-type runnableTool interface {
-	Run(ctx adktool.Context, args any) (map[string]any, error)
-}
-
-func newTestClient(t *testing.T, store spotify.TokenStore, mux http.Handler) (*spotify.Client, context.Context) {
-	t.Helper()
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	target, err := url.Parse(srv.URL)
-	if err != nil {
-		t.Fatalf("parse server url: %v", err)
-	}
-	// Route every Spotify request — token refresh and API — at the test server,
-	// dispatched by path, so the real client runs against our fixtures.
-	httpClient := &http.Client{Transport: rewriteTransport{target: target}}
-	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, httpClient)
-	return spotify.New(store, testAuth()), ctx
-}
-
-func testAuth() *spotifyauth.Authenticator {
-	return spotifyauth.New(
-		spotifyauth.WithClientID("test-id"),
-		spotifyauth.WithClientSecret("test-secret"),
-	)
-}
-
-type rewriteTransport struct{ target *url.URL }
-
-func (rt rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.URL.Scheme = rt.target.Scheme
-	req.URL.Host = rt.target.Host
-	return http.DefaultTransport.RoundTrip(req)
-}
-
-func writeToken(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, `{"access_token":"test-access","token_type":"Bearer","expires_in":3600}`)
-}
-
-func writeJSON(w http.ResponseWriter, body string) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(body))
-}
-
-type fakeStore struct {
-	gotUserID string
-}
-
-func (s *fakeStore) GetRefreshToken(_ context.Context, userID string) (string, error) {
-	s.gotUserID = userID
-	return "refresh-token", nil
-}
-
-func (s *fakeStore) SaveRefreshToken(_ context.Context, _, _ string) error { return nil }
-
-func (s *fakeStore) DeleteRefreshToken(_ context.Context, _ string) error { return nil }
-
-// testContext is a minimal adktool.Context for exercising tool handlers. It
-// embeds the harness context so oauth2 picks up the test HTTP client, and
-// reports a configurable UserID.
+// testContext is a minimal adktool.Context for exercising tool handlers,
+// reporting a configurable UserID.
 type testContext struct {
 	context.Context
 	userID string

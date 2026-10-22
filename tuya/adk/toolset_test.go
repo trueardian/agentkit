@@ -3,13 +3,13 @@ package adk
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"go.trueardian.com/tuya"
 	"go.trueardian.com/tuya/appaccount"
 )
 
-// stubClient implements Client for tests that only need tool registration to succeed.
 type stubClient struct{}
 
 func (stubClient) Get(context.Context, string) (appaccount.Account, error) {
@@ -60,18 +60,9 @@ func TestForAgent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := forAgent(tt.err)
-			if got == nil || !contains(got.Error(), tt.want) {
+			if got == nil || !strings.Contains(got.Error(), tt.want) {
 				t.Errorf("forAgent(%v) = %v, want substring %q", tt.err, got, tt.want)
 			}
 		})
 	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

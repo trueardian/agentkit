@@ -33,6 +33,8 @@ type ContactClient interface {
 	AddContact(ctx context.Context, ownerID string, in gworkspace.ContactInput) (gworkspace.Contact, error)
 }
 
+var _ ContactClient = (*gworkspace.Contacts)(nil)
+
 // ContactTools returns the Google Contacts toolset bound to c. It errors if
 // c is nil.
 func ContactTools(c ContactClient) ([]adktool.Tool, error) {

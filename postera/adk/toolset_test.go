@@ -16,7 +16,7 @@ import (
 	"go.trueardian.com/postera"
 )
 
-func TestToolsNilPostarius(t *testing.T) {
+func TestToolsNilClient(t *testing.T) {
 	if _, err := Tools(nil); err == nil {
 		t.Fatal("Tools(nil): want error, got nil")
 	}
@@ -162,8 +162,6 @@ func TestCancel_Unknown_Errors(t *testing.T) {
 		t.Fatal("expected error cancelling an unknown id, got nil")
 	}
 }
-
-// --- helpers ---
 
 // newPostarius builds a Postarius with a fixed UTC default zone, so trigger_at
 // parses and renders deterministically without a per-request timezone in context.

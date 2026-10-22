@@ -1,6 +1,7 @@
 package adk
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -17,36 +18,39 @@ type posterumView struct {
 	CreatedAt string `json:"created_at"`
 }
 
-type createArgs struct {
-	Message   string `json:"message"`
-	TriggerAt string `json:"trigger_at"`
+func toPosterumView(p postera.Posterum, loc *time.Location) posterumView {
+	return posterumView{
+		ID:        p.ID,
+		Message:   p.Message,
+		TriggerAt: p.TriggerAt.In(loc).Format(postera.TimeLayout),
+		CreatedAt: p.CreatedAt.In(loc).Format(postera.TimeLayout),
+	}
 }
 
-type listUpcomingArgs struct{}
-
-type listOutput struct {
-	Entries []posterumView `json:"entries"`
+type Client interface {
+	Create(ctx context.Context, args postera.CreateArgs) (postera.Posterum, error)
+	ListUpcoming(ctx context.Context) ([]postera.Posterum, error)
+	Cancel(ctx context.Context, id string) error
+	LocalizesFromContext() bool
+	LocationFromContext(ctx context.Context) *time.Location
 }
 
-type cancelArgs struct {
-	ID string `json:"id"`
-}
+var _ Client = (*postera.Postarius)(nil)
 
-type cancelOutput struct {
-	ID        string `json:"id"`
-	Cancelled bool   `json:"cancelled"`
-}
-
-func Tools(p *postera.Postarius) ([]adktool.Tool, error) {
-	if p == nil {
-		return nil, errors.New("adk: Tools: postarius must not be nil")
+func Tools(c Client) ([]adktool.Tool, error) {
+	if c == nil {
+		return nil, errors.New("adk: Tools: client must not be nil")
 	}
 
 	triggerAtDoc := `trigger_at: ISO 8601 with no timezone suffix (e.g. "2026-05-07T22:00:00").`
-	if p.LocalizesFromContext() {
+	if c.LocalizesFromContext() {
 		triggerAtDoc += " Time is localized consistently across you and Postera, so no conversion is needed."
 	}
 
+	type createArgs struct {
+		Message   string `json:"message"`
+		TriggerAt string `json:"trigger_at"`
+	}
 	create, err := functiontool.New(
 		functiontool.Config{
 			Name: "wake_future_self",
@@ -72,20 +76,24 @@ mentioned; they were waiting on their manager's approval." — carries the
 who/what/why. BAD: "Follow up" (too vague) or "Reminder" (not actionable).`,
 		},
 		func(toolCtx adktool.Context, in createArgs) (posterumView, error) {
-			pstr, err := p.Create(toolCtx, postera.CreateArgs{
+			pstr, err := c.Create(toolCtx, postera.CreateArgs{
 				Message:   in.Message,
 				TriggerAt: in.TriggerAt,
 			})
 			if err != nil {
 				return posterumView{}, err
 			}
-			return toPosterumView(pstr, p.LocationFromContext(toolCtx)), nil
+			return toPosterumView(pstr, c.LocationFromContext(toolCtx)), nil
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	type listOutput struct {
+		Entries []posterumView `json:"entries"`
+	}
+	type listUpcomingArgs struct{}
 	listUpcoming, err := functiontool.New(
 		functiontool.Config{
 			Name: "list_upcoming_wakes",
@@ -97,17 +105,29 @@ WHEN TO USE:
 - You need a wake's id before cancelling it with cancel_upcoming_wake`,
 		},
 		func(toolCtx adktool.Context, _ listUpcomingArgs) (listOutput, error) {
-			entries, err := p.ListUpcoming(toolCtx)
+			entries, err := c.ListUpcoming(toolCtx)
 			if err != nil {
 				return listOutput{}, err
 			}
-			return listOutput{Entries: toPosterumViews(entries, p.LocationFromContext(toolCtx))}, nil
+			loc := c.LocationFromContext(toolCtx)
+			views := make([]posterumView, len(entries))
+			for i, entry := range entries {
+				views[i] = toPosterumView(entry, loc)
+			}
+			return listOutput{Entries: views}, nil
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	type cancelOutput struct {
+		ID        string `json:"id"`
+		Cancelled bool   `json:"cancelled"`
+	}
+	type cancelArgs struct {
+		ID string `json:"id"`
+	}
 	cancel, err := functiontool.New(
 		functiontool.Config{
 			Name: "cancel_upcoming_wake",
@@ -125,7 +145,7 @@ HOW TO USE:
   not found.`,
 		},
 		func(toolCtx adktool.Context, in cancelArgs) (cancelOutput, error) {
-			if err := p.Cancel(toolCtx, in.ID); err != nil {
+			if err := c.Cancel(toolCtx, in.ID); err != nil {
 				return cancelOutput{}, err
 			}
 			return cancelOutput{ID: in.ID, Cancelled: true}, nil
@@ -136,21 +156,4 @@ HOW TO USE:
 	}
 
 	return []adktool.Tool{create, listUpcoming, cancel}, nil
-}
-
-func toPosterumView(p postera.Posterum, loc *time.Location) posterumView {
-	return posterumView{
-		ID:        p.ID,
-		Message:   p.Message,
-		TriggerAt: p.TriggerAt.In(loc).Format(postera.TimeLayout),
-		CreatedAt: p.CreatedAt.In(loc).Format(postera.TimeLayout),
-	}
-}
-
-func toPosterumViews(entries []postera.Posterum, loc *time.Location) []posterumView {
-	views := make([]posterumView, len(entries))
-	for i, entry := range entries {
-		views[i] = toPosterumView(entry, loc)
-	}
-	return views
 }

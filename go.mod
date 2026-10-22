@@ -4,17 +4,18 @@ go 1.25.8
 
 require (
 	github.com/getzep/zep-go/v3 v3.20.0
-	github.com/zmb3/spotify/v2 v2.4.3
 	go.trueardian.com/gworkspace v0.8.0
 	go.trueardian.com/postera v0.23.0
 	go.trueardian.com/spotify v0.10.0
-	golang.org/x/oauth2 v0.36.0
+	go.trueardian.com/tuya v0.10.0
 	google.golang.org/adk v1.2.0
 	google.golang.org/genai v1.54.0
 )
 
 require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
+	github.com/zmb3/spotify/v2 v2.4.3 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
 	google.golang.org/api v0.286.0 // indirect
 )
 
@@ -29,7 +30,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/safehtml v0.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.16 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
@@ -40,7 +40,6 @@ require (
 	go.opentelemetry.io/otel/log v0.16.0 // indirect
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
-	go.trueardian.com/tuya v0.10.0
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect

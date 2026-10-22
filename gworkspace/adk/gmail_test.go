@@ -7,9 +7,6 @@ import (
 	"go.trueardian.com/gworkspace"
 )
 
-// Compile-time check to verify *gworkspace.Gmail satisfies GmailClient.
-var _ GmailClient = (*gworkspace.Gmail)(nil)
-
 type gmailStub struct{}
 
 func (gmailStub) ReadMessages(ctx context.Context, ownerID string, q gworkspace.MessageQuery) ([]gworkspace.Message, error) {

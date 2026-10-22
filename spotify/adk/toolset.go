@@ -4,6 +4,7 @@
 package adk
 
 import (
+	"context"
 	"errors"
 
 	adktool "google.golang.org/adk/tool"
@@ -20,6 +21,16 @@ type trackView struct {
 	URL     string   `json:"url"`
 }
 
+func toTrackView(t spotify.Track) trackView {
+	return trackView{
+		ID:      t.ID,
+		Name:    t.Name,
+		Artists: t.Artists,
+		URI:     t.URI,
+		URL:     t.URL,
+	}
+}
+
 type playlistView struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -28,12 +39,32 @@ type playlistView struct {
 	URL         string `json:"url"`
 }
 
+func toPlaylistView(p spotify.Playlist) playlistView {
+	return playlistView{
+		ID:          p.ID,
+		Name:        p.Name,
+		Description: p.Description,
+		Total:       p.Total,
+		URL:         p.URL,
+	}
+}
+
 type deviceView struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	IsActive bool   `json:"is_active"`
 	Volume   int    `json:"volume"`
+}
+
+func toDeviceView(d spotify.Device) deviceView {
+	return deviceView{
+		ID:       d.ID,
+		Name:     d.Name,
+		Type:     d.Type,
+		IsActive: d.IsActive,
+		Volume:   d.Volume,
+	}
 }
 
 // playbackView reports what is playing right now. Track and Device are omitted
@@ -48,57 +79,74 @@ type playbackView struct {
 	ContextType string      `json:"context_type,omitempty"`
 }
 
-// noArgs is shared by the tools that take no input.
-type noArgs struct{}
-
-type searchTracksArgs struct {
-	Query string `json:"query"`
+// toPlaybackView maps the client's playback snapshot to the agent-facing view.
+// A nil snapshot means no active device, which reads as simply not playing.
+func toPlaybackView(pb *spotify.Playback) playbackView {
+	if pb == nil {
+		return playbackView{Playing: false}
+	}
+	view := playbackView{
+		Playing:     pb.IsPlaying,
+		ProgressMs:  pb.ProgressMs,
+		ContextURI:  pb.ContextURI,
+		ContextType: pb.ContextType,
+	}
+	if pb.Track != nil {
+		t := toTrackView(*pb.Track)
+		view.Track = &t
+	}
+	d := toDeviceView(pb.Device)
+	view.Device = &d
+	return view
 }
 
-type playlistTracksArgs struct {
-	PlaylistID string `json:"playlist_id"`
+// forAgent rewrites the client's sentinel errors into guidance the agent can
+// act on, while leaving anything unrecognized untouched. The point is that the
+// model reading the error should know what to do next.
+func forAgent(err error) error {
+	switch {
+	case errors.Is(err, spotify.ErrNotConnected):
+		return errors.New("the human hasn't connected their Spotify account yet — they need to link it before I can do this")
+	case errors.Is(err, spotify.ErrNoActiveDevice):
+		return errors.New("no active Spotify device — ask the human to open Spotify somewhere, or check my_devices, then try again")
+	case errors.Is(err, spotify.ErrPremiumRequired):
+		return errors.New("this needs Spotify Premium; the human's account can't do playback control")
+	case errors.Is(err, spotify.ErrRateLimited):
+		return errors.New("Spotify is rate-limiting right now — wait a moment before trying again")
+	default:
+		return err
+	}
 }
 
-type playArgs struct {
-	URI        string `json:"uri"`
-	ContextURI string `json:"context_uri"`
-	DeviceID   string `json:"device_id"`
+type Client interface {
+	SearchTracks(ctx context.Context, userID, query string) ([]spotify.Track, error)
+	UserPlaylists(ctx context.Context, userID string) ([]spotify.Playlist, error)
+	PlaylistTracks(ctx context.Context, userID, playlistID string) ([]spotify.Track, error)
+	CurrentPlayback(ctx context.Context, userID string) (*spotify.Playback, error)
+	Devices(ctx context.Context, userID string) ([]spotify.Device, error)
+	Play(ctx context.Context, userID string, req spotify.PlayRequest) error
+	TransferPlayback(ctx context.Context, userID, deviceID string, play bool) error
+	Pause(ctx context.Context, userID string) error
+	Next(ctx context.Context, userID string) error
+	Previous(ctx context.Context, userID string) error
+	SetVolume(ctx context.Context, userID string, percent int) error
 }
 
-type transferPlaybackArgs struct {
-	DeviceID string `json:"device_id"`
-	Play     bool   `json:"play"`
-}
-
-type setVolumeArgs struct {
-	Percent int `json:"percent"`
-}
-
-type tracksOutput struct {
-	Tracks []trackView `json:"tracks"`
-}
-
-type playlistsOutput struct {
-	Playlists []playlistView `json:"playlists"`
-}
-
-type devicesOutput struct {
-	Devices []deviceView `json:"devices"`
-}
-
-// ack confirms a playback command landed. A returned error means it did not;
-// ack{OK: true} means it did.
-type ack struct {
-	OK bool `json:"ok"`
-}
+var _ Client = (*spotify.Client)(nil)
 
 // Tools returns the Spotify toolset bound to c. It errors if c is nil so the
 // failure surfaces at wiring time, not on the first tool call.
-func Tools(c *spotify.Client) ([]adktool.Tool, error) {
+func Tools(c Client) ([]adktool.Tool, error) {
 	if c == nil {
 		return nil, errors.New("adk: Tools: client must not be nil")
 	}
 
+	type tracksOutput struct {
+		Tracks []trackView `json:"tracks"`
+	}
+	type searchTracksArgs struct {
+		Query string `json:"query"`
+	}
 	searchTracks, err := functiontool.New(
 		functiontool.Config{
 			Name: "search_tracks",
@@ -118,13 +166,21 @@ HOW TO USE:
 			if err != nil {
 				return tracksOutput{}, forAgent(err)
 			}
-			return tracksOutput{Tracks: toTrackViews(tracks)}, nil
+			views := make([]trackView, len(tracks))
+			for i, t := range tracks {
+				views[i] = toTrackView(t)
+			}
+			return tracksOutput{Tracks: views}, nil
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	type playlistsOutput struct {
+		Playlists []playlistView `json:"playlists"`
+	}
+	type noArgs struct{}
 	myPlaylists, err := functiontool.New(
 		functiontool.Config{
 			Name: "my_playlists",
@@ -140,13 +196,20 @@ WHEN TO USE:
 			if err != nil {
 				return playlistsOutput{}, forAgent(err)
 			}
-			return playlistsOutput{Playlists: toPlaylistViews(playlists)}, nil
+			views := make([]playlistView, len(playlists))
+			for i, p := range playlists {
+				views[i] = toPlaylistView(p)
+			}
+			return playlistsOutput{Playlists: views}, nil
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	type playlistTracksArgs struct {
+		PlaylistID string `json:"playlist_id"`
+	}
 	playlistTracks, err := functiontool.New(
 		functiontool.Config{
 			Name: "playlist_tracks",
@@ -165,7 +228,11 @@ HOW TO USE:
 			if err != nil {
 				return tracksOutput{}, forAgent(err)
 			}
-			return tracksOutput{Tracks: toTrackViews(tracks)}, nil
+			views := make([]trackView, len(tracks))
+			for i, t := range tracks {
+				views[i] = toTrackView(t)
+			}
+			return tracksOutput{Tracks: views}, nil
 		},
 	)
 	if err != nil {
@@ -197,6 +264,9 @@ WHAT I GET BACK:
 		return nil, err
 	}
 
+	type devicesOutput struct {
+		Devices []deviceView `json:"devices"`
+	}
 	myDevices, err := functiontool.New(
 		functiontool.Config{
 			Name: "my_devices",
@@ -212,13 +282,25 @@ WHEN TO USE:
 			if err != nil {
 				return devicesOutput{}, forAgent(err)
 			}
-			return devicesOutput{Devices: toDeviceViews(devices)}, nil
+			views := make([]deviceView, len(devices))
+			for i, d := range devices {
+				views[i] = toDeviceView(d)
+			}
+			return devicesOutput{Devices: views}, nil
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	type ack struct {
+		OK bool `json:"ok"`
+	}
+	type playArgs struct {
+		URI        string `json:"uri"`
+		ContextURI string `json:"context_uri"`
+		DeviceID   string `json:"device_id"`
+	}
 	play, err := functiontool.New(
 		functiontool.Config{
 			Name: "play",
@@ -266,6 +348,10 @@ Premium-only, like all playback control.`,
 		return nil, err
 	}
 
+	type transferPlaybackArgs struct {
+		DeviceID string `json:"device_id"`
+		Play     bool   `json:"play"`
+	}
 	transferPlayback, err := functiontool.New(
 		functiontool.Config{
 			Name: "transfer_playback",
@@ -357,6 +443,9 @@ WHEN TO USE:
 		return nil, err
 	}
 
+	type setVolumeArgs struct {
+		Percent int `json:"percent"`
+	}
 	setVolume, err := functiontool.New(
 		functiontool.Config{
 			Name: "set_volume",
@@ -393,93 +482,4 @@ HOW TO USE:
 		skipPrevious,
 		setVolume,
 	}, nil
-}
-
-// forAgent rewrites the client's sentinel errors into guidance the agent can
-// act on, while leaving anything unrecognized untouched. The point is that the
-// model reading the error should know what to do next.
-func forAgent(err error) error {
-	switch {
-	case errors.Is(err, spotify.ErrNotConnected):
-		return errors.New("the human hasn't connected their Spotify account yet — they need to link it before I can do this")
-	case errors.Is(err, spotify.ErrNoActiveDevice):
-		return errors.New("no active Spotify device — ask the human to open Spotify somewhere, or check my_devices, then try again")
-	case errors.Is(err, spotify.ErrPremiumRequired):
-		return errors.New("this needs Spotify Premium; the human's account can't do playback control")
-	case errors.Is(err, spotify.ErrRateLimited):
-		return errors.New("Spotify is rate-limiting right now — wait a moment before trying again")
-	default:
-		return err
-	}
-}
-
-func toTrackView(t spotify.Track) trackView {
-	return trackView{
-		ID:      t.ID,
-		Name:    t.Name,
-		Artists: t.Artists,
-		URI:     t.URI,
-		URL:     t.URL,
-	}
-}
-
-func toTrackViews(tracks []spotify.Track) []trackView {
-	views := make([]trackView, len(tracks))
-	for i, t := range tracks {
-		views[i] = toTrackView(t)
-	}
-	return views
-}
-
-func toPlaylistViews(playlists []spotify.Playlist) []playlistView {
-	views := make([]playlistView, len(playlists))
-	for i, p := range playlists {
-		views[i] = playlistView{
-			ID:          p.ID,
-			Name:        p.Name,
-			Description: p.Description,
-			Total:       p.Total,
-			URL:         p.URL,
-		}
-	}
-	return views
-}
-
-func toDeviceView(d spotify.Device) deviceView {
-	return deviceView{
-		ID:       d.ID,
-		Name:     d.Name,
-		Type:     d.Type,
-		IsActive: d.IsActive,
-		Volume:   d.Volume,
-	}
-}
-
-func toDeviceViews(devices []spotify.Device) []deviceView {
-	views := make([]deviceView, len(devices))
-	for i, d := range devices {
-		views[i] = toDeviceView(d)
-	}
-	return views
-}
-
-// toPlaybackView maps the client's playback snapshot to the agent-facing view.
-// A nil snapshot means no active device, which reads as simply not playing.
-func toPlaybackView(pb *spotify.Playback) playbackView {
-	if pb == nil {
-		return playbackView{Playing: false}
-	}
-	view := playbackView{
-		Playing:     pb.IsPlaying,
-		ProgressMs:  pb.ProgressMs,
-		ContextURI:  pb.ContextURI,
-		ContextType: pb.ContextType,
-	}
-	if pb.Track != nil {
-		t := toTrackView(*pb.Track)
-		view.Track = &t
-	}
-	d := toDeviceView(pb.Device)
-	view.Device = &d
-	return view
 }

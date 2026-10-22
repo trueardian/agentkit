@@ -14,18 +14,6 @@ import (
 	"go.trueardian.com/tuya/appaccount"
 )
 
-// Client is the surface the toolset drives. appaccount.Service satisfies it.
-// Get and Devices take the human's owner id (toolCtx.UserID()) and resolve it to
-// their Tuya UID; DeviceStatus and SendCommands address the device directly.
-type Client interface {
-	Get(ctx context.Context, owner string) (appaccount.Account, error)
-	Devices(ctx context.Context, owner string, opts ...tuya.DeviceOption) ([]tuya.UserDevice, error)
-	DeviceStatus(ctx context.Context, deviceID string) ([]tuya.DataPoint, error)
-	SendCommands(ctx context.Context, deviceID string, commands []tuya.DataPoint) error
-}
-
-var _ Client = (*appaccount.Service)(nil)
-
 // dataPointView is one Tuya data point (DP): a capability code and its value.
 // It is how a device reports state and how it's told to change — e.g.
 // {"code": "switch_1", "value": true}.
@@ -34,11 +22,19 @@ type dataPointView struct {
 	Value any    `json:"value"`
 }
 
+func toDataPointView(d tuya.DataPoint) dataPointView {
+	return dataPointView{Code: d.Code, Value: d.Value}
+}
+
 // channelView names one switch/outlet of a multi-gang device, tying its DP code
 // (e.g. "switch_1") to the human's label (e.g. "Kitchen light").
 type channelView struct {
 	Identifier string `json:"identifier"`
 	Name       string `json:"name"`
+}
+
+func toChannelView(ch tuya.Channel) channelView {
+	return channelView{Identifier: ch.Identifier, Name: ch.Name}
 }
 
 // deviceView is a device with its current state and, for multi-gang
@@ -51,37 +47,47 @@ type deviceView struct {
 	Channels []channelView   `json:"channels"`
 }
 
-// accountView reports the human's linked Tuya account.
-type accountView struct {
-	Owner   string `json:"owner"`
-	TuyaUID string `json:"tuya_uid"`
+func toDeviceView(d tuya.UserDevice) deviceView {
+	status := make([]dataPointView, len(d.Status))
+	for i, dp := range d.Status {
+		status[i] = toDataPointView(dp)
+	}
+	channels := make([]channelView, len(d.Channels))
+	for i, ch := range d.Channels {
+		channels[i] = toChannelView(ch)
+	}
+	return deviceView{
+		ID:       d.ID,
+		Category: d.Category,
+		Name:     d.Name,
+		Status:   status,
+		Channels: channels,
+	}
 }
 
-// noArgs is shared by the tools that take no input.
-type noArgs struct{}
-
-type deviceIDArgs struct {
-	DeviceID string `json:"device_id"`
+// forAgent rewrites the client's sentinel errors into guidance the agent can
+// act on, leaving anything unrecognized untouched. The model reading the error
+// should know what to do next.
+func forAgent(err error) error {
+	switch {
+	case errors.Is(err, appaccount.ErrNotLinked):
+		return errors.New("the human hasn't linked their Tuya account yet — they need to link it before I can see or control any device")
+	default:
+		return err
+	}
 }
 
-type sendCommandsArgs struct {
-	DeviceID string          `json:"device_id"`
-	Commands []dataPointView `json:"commands"`
+// Client is the surface the toolset drives. appaccount.Service satisfies it.
+// Get and Devices take the human's owner id (toolCtx.UserID()) and resolve it to
+// their Tuya UID; DeviceStatus and SendCommands address the device directly.
+type Client interface {
+	Get(ctx context.Context, owner string) (appaccount.Account, error)
+	Devices(ctx context.Context, owner string, opts ...tuya.DeviceOption) ([]tuya.UserDevice, error)
+	DeviceStatus(ctx context.Context, deviceID string) ([]tuya.DataPoint, error)
+	SendCommands(ctx context.Context, deviceID string, commands []tuya.DataPoint) error
 }
 
-type devicesOutput struct {
-	Devices []deviceView `json:"devices"`
-}
-
-type statusOutput struct {
-	Status []dataPointView `json:"status"`
-}
-
-// ack confirms a command landed. A returned error means it didn't; ack{OK: true}
-// means it did.
-type ack struct {
-	OK bool `json:"ok"`
-}
+var _ Client = (*appaccount.Service)(nil)
 
 // Tools returns the Tuya toolset bound to c. It errors if c is nil so the
 // failure surfaces at wiring time, not on the first tool call.
@@ -90,6 +96,11 @@ func Tools(c Client) ([]adktool.Tool, error) {
 		return nil, errors.New("adk: Tools: client must not be nil")
 	}
 
+	type accountOutput struct {
+		Owner   string `json:"owner"`
+		TuyaUID string `json:"tuya_uid"`
+	}
+	type noArgs struct{}
 	getAccount, err := functiontool.New(
 		functiontool.Config{
 			Name: "get_account",
@@ -103,18 +114,21 @@ WHAT I GET BACK:
 - The linked Tuya account. If nothing is linked, the human needs to link one
   before I can see or control any device.`,
 		},
-		func(toolCtx adktool.Context, _ noArgs) (accountView, error) {
+		func(toolCtx adktool.Context, _ noArgs) (accountOutput, error) {
 			acc, err := c.Get(toolCtx, toolCtx.UserID())
 			if err != nil {
-				return accountView{}, forAgent(err)
+				return accountOutput{}, forAgent(err)
 			}
-			return accountView{Owner: acc.Owner, TuyaUID: acc.TuyaUID}, nil
+			return accountOutput{Owner: acc.Owner, TuyaUID: acc.TuyaUID}, nil
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	type devicesOutput struct {
+		Devices []deviceView `json:"devices"`
+	}
 	listDevices, err := functiontool.New(
 		functiontool.Config{
 			Name: "list_devices",
@@ -135,13 +149,23 @@ WHAT I GET BACK:
 			if err != nil {
 				return devicesOutput{}, forAgent(err)
 			}
-			return devicesOutput{Devices: toDeviceViews(devices)}, nil
+			views := make([]deviceView, len(devices))
+			for i, d := range devices {
+				views[i] = toDeviceView(d)
+			}
+			return devicesOutput{Devices: views}, nil
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	type statusOutput struct {
+		Status []dataPointView `json:"status"`
+	}
+	type deviceIDArgs struct {
+		DeviceID string `json:"device_id"`
+	}
 	deviceStatus, err := functiontool.New(
 		functiontool.Config{
 			Name: "device_status",
@@ -162,13 +186,24 @@ WHAT I GET BACK:
 			if err != nil {
 				return statusOutput{}, forAgent(err)
 			}
-			return statusOutput{Status: toDataPointViews(status)}, nil
+			views := make([]dataPointView, len(status))
+			for i, dp := range status {
+				views[i] = toDataPointView(dp)
+			}
+			return statusOutput{Status: views}, nil
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	type ack struct {
+		OK bool `json:"ok"`
+	}
+	type sendCommandsArgs struct {
+		DeviceID string          `json:"device_id"`
+		Commands []dataPointView `json:"commands"`
+	}
 	sendCommands, err := functiontool.New(
 		functiontool.Config{
 			Name: "send_commands",
@@ -186,7 +221,11 @@ HOW TO USE:
   status or channels first if I'm unsure which code does what.`,
 		},
 		func(toolCtx adktool.Context, in sendCommandsArgs) (ack, error) {
-			if err := c.SendCommands(toolCtx, in.DeviceID, toDataPoints(in.Commands)); err != nil {
+			commands := make([]tuya.DataPoint, len(in.Commands))
+			for i, v := range in.Commands {
+				commands[i] = tuya.DataPoint{Code: v.Code, Value: v.Value}
+			}
+			if err := c.SendCommands(toolCtx, in.DeviceID, commands); err != nil {
 				return ack{}, forAgent(err)
 			}
 			return ack{OK: true}, nil
@@ -202,58 +241,4 @@ HOW TO USE:
 		deviceStatus,
 		sendCommands,
 	}, nil
-}
-
-// forAgent rewrites the client's sentinel errors into guidance the agent can
-// act on, leaving anything unrecognized untouched. The model reading the error
-// should know what to do next.
-func forAgent(err error) error {
-	switch {
-	case errors.Is(err, appaccount.ErrNotLinked):
-		return errors.New("the human hasn't linked their Tuya account yet — they need to link it before I can see or control any device")
-	default:
-		return err
-	}
-}
-
-func toDataPointView(d tuya.DataPoint) dataPointView {
-	return dataPointView{Code: d.Code, Value: d.Value}
-}
-
-func toDataPointViews(dps []tuya.DataPoint) []dataPointView {
-	views := make([]dataPointView, len(dps))
-	for i, d := range dps {
-		views[i] = toDataPointView(d)
-	}
-	return views
-}
-
-func toDataPoints(views []dataPointView) []tuya.DataPoint {
-	dps := make([]tuya.DataPoint, len(views))
-	for i, v := range views {
-		dps[i] = tuya.DataPoint{Code: v.Code, Value: v.Value}
-	}
-	return dps
-}
-
-func toChannelViews(channels []tuya.Channel) []channelView {
-	views := make([]channelView, len(channels))
-	for i, ch := range channels {
-		views[i] = channelView{Identifier: ch.Identifier, Name: ch.Name}
-	}
-	return views
-}
-
-func toDeviceViews(devices []tuya.UserDevice) []deviceView {
-	views := make([]deviceView, len(devices))
-	for i, d := range devices {
-		views[i] = deviceView{
-			ID:       d.ID,
-			Category: d.Category,
-			Name:     d.Name,
-			Status:   toDataPointViews(d.Status),
-			Channels: toChannelViews(d.Channels),
-		}
-	}
-	return views
 }

@@ -7,9 +7,6 @@ import (
 	"go.trueardian.com/gworkspace"
 )
 
-// Compile-time check to verify *gworkspace.Calendar satisfies CalendarClient.
-var _ CalendarClient = (*gworkspace.Calendar)(nil)
-
 type calendarStub struct{}
 
 func (calendarStub) GetEvents(ctx context.Context, ownerID string, q gworkspace.EventQuery) ([]gworkspace.Event, error) {

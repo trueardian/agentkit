@@ -42,6 +42,8 @@ type GmailClient interface {
 	SendEmail(ctx context.Context, ownerID, to, subject, body string) error
 }
 
+var _ GmailClient = (*gworkspace.Gmail)(nil)
+
 // GmailTools returns the Gmail toolset bound to c. It errors if c is nil.
 func GmailTools(c GmailClient) ([]adktool.Tool, error) {
 	if c == nil {

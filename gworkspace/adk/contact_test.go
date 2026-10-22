@@ -7,9 +7,6 @@ import (
 	"go.trueardian.com/gworkspace"
 )
 
-// Compile-time check to verify *gworkspace.Contacts satisfies ContactClient.
-var _ ContactClient = (*gworkspace.Contacts)(nil)
-
 type contactStub struct{}
 
 func (contactStub) GetContacts(ctx context.Context, ownerID string, q gworkspace.ContactQuery) ([]gworkspace.Contact, error) {
