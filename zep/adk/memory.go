@@ -2,6 +2,7 @@ package adk
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/getzep/zep-go/v3"
 	"github.com/getzep/zep-go/v3/client"
@@ -12,7 +13,6 @@ import (
 	"google.golang.org/genai"
 )
 
-// graphClient is the slice of zep graph functionality this service needs.
 type graphClient interface {
 	Search(ctx context.Context, request *zep.GraphSearchQuery, opts ...option.RequestOption) (*zep.GraphSearchResults, error)
 }
@@ -24,12 +24,10 @@ type MemoryService struct {
 	graphClient graphClient
 }
 
+var _ memory.Service = (*MemoryService)(nil)
+
 func NewMemoryService(c *client.Client) *MemoryService {
-	s := &MemoryService{}
-	if c != nil {
-		s.graphClient = c.Graph
-	}
-	return s
+	return &MemoryService{graphClient: c.Graph}
 }
 
 // SearchMemory runs a user-scoped graph search and returns Zep's materialized
@@ -43,16 +41,17 @@ func (s *MemoryService) SearchMemory(ctx context.Context, req *memory.SearchRequ
 		Scope:  &scope,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("zep: search graph of user %q: %w", req.UserID, err)
 	}
 
-	if res == nil || res.GetContext() == nil || *res.GetContext() == "" {
+	text := res.GetContext()
+	if text == nil || *text == "" {
 		return &memory.SearchResponse{}, nil
 	}
 
 	return &memory.SearchResponse{
 		Memories: []memory.Entry{{
-			Content: genai.NewContentFromText(*res.GetContext(), genai.Role("model")),
+			Content: genai.NewContentFromText(*text, genai.RoleModel),
 		}},
 	}, nil
 }
@@ -63,5 +62,3 @@ func (s *MemoryService) SearchMemory(ctx context.Context, req *memory.SearchRequ
 func (s *MemoryService) AddSessionToMemory(ctx context.Context, sess adksession.Session) error {
 	return nil
 }
-
-var _ memory.Service = (*MemoryService)(nil)

@@ -83,7 +83,7 @@ func TestSearchMemory_Error(t *testing.T) {
 }
 
 func TestAddSessionToMemory_NoOp(t *testing.T) {
-	s := NewMemoryService(nil)
+	s := &MemoryService{}
 	if err := s.AddSessionToMemory(context.Background(), nil); err != nil {
 		t.Errorf("AddSessionToMemory = %v, want nil", err)
 	}
