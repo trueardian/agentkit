@@ -1,514 +1,242 @@
 # agentkit
 
 [![Go Reference](https://pkg.go.dev/badge/go.trueardian.com/agentkit.svg)](https://pkg.go.dev/go.trueardian.com/agentkit)
-[![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](go.mod)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-00ADD8)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Thin, idiomatic bindings that adapt framework-agnostic Go clients to Go agent
-frameworks.** A client that already knows how to talk to Spotify, Zep, Tuya, or
-Google Workspace shouldn't need to know it lives inside an agent. `agentkit`
-carries that knowledge in a layer of its own, one binding per framework.
-
-```
-  framework-agnostic client            agentkit binding                agent framework
-  (its own module, no agent deps)      (this module, thin)             (Google ADK today)
- ┌───────────────────────────┐   ┌───────────────────────────┐   ┌──────────────────────┐
- │ spotify.Client            │   │ spotify/adk.Tools(c)       │   │                      │
- │ tuya/appaccount.Service   │──▶│ tuya/adk.Tools(c)          │──▶│ []adktool.Tool       │
- │ gworkspace.{Gmail,…}      │   │ gworkspace/adk.*Tools(c)   │   │ adksession.Service   │
- │ postera.Postarius         │   │ postera/adk.Tools(p)       │   │ memory.Service       │
- │ zep client                │   │ zep/adk.New*Service(c)     │   │                      │
- └───────────────────────────┘   └───────────────────────────┘   └──────────────────────┘
-        depends on nothing              depends on both              knows nothing of us
-```
-
-The layout is `<integration>/<framework>` — `spotify/adk`, `zep/adk`, and so on.
-The framework sits in the *leaf* so the same client can gain a second binding
-(`spotify/langchaingo`, say) later without moving or renaming a thing. Today the
-only leaf is `adk`, [Google's Agent Development Kit][adk].
-
-Callers are people wiring an agent: you already hold a configured `*spotify.Client`
-or Zep client, and you want it registered as tools, a session backend, or a memory
-backend with one call. That is the pattern every decision below optimizes for.
-
----
-
-## Contents
-
-- [Why this shape](#why-this-shape)
-- [At a glance](#at-a-glance)
-- [Install](#install)
-- [Quick start](#quick-start)
-- [Design decisions & trade-offs](#design-decisions--trade-offs)
-- [Design principles](#design-principles)
-- [Owned nuances](#owned-nuances)
-- [Non-goals](#non-goals)
-- [Verification](#verification)
-- [Compatibility](#compatibility)
-- [Layout](#layout)
-- [License](#license)
-
----
-
-## Why this shape
-
-**The clients are not ours to bend, and the framework is not theirs to know.**
-
-Each underlying client (`go.trueardian.com/spotify`, `/gworkspace`, `/tuya`,
-`/postera`, and the Zep SDK) is a standalone module with no dependency on any
-agent framework. That is deliberate: the client is reusable from an HTTP handler,
-a cron job, or a CLI, and it stays testable without pulling ADK's dependency tree.
-
-An agent framework, meanwhile, wants very specific shapes — `adktool.Tool`,
-`adksession.Service`, `model.LLM`. Something has to translate. Putting that
-translation *in the client* would couple every client to a framework; putting it
-*in the app* would make every app rewrite the same adapter. `agentkit` is the
-third place: a binding module that depends on both and is depended on by neither.
-Because the binding is the only thing that knows both sides, it is the only thing
-that has to change when either side moves — and it is small enough to change fast.
-
----
-
-## At a glance
-
-Every package is one subpackage per framework (`adk` today). Each exposes a single
-constructor that takes an already-configured client and returns framework types.
-
-| Package          | What you give it            | What you get                                           | Surface                              |
-| ---------------- | --------------------------- | ------------------------------------------------------ | ------------------------------------ |
-| `gworkspace/adk` | `*gworkspace.{Gmail,…}`     | Gmail, Calendar, Contacts as tools (6 tools)           | `GmailTools`, `CalendarTools`, `ContactTools` |
-| `spotify/adk`    | `*spotify.Client`           | Search + playback control as tools (11 tools)          | `Tools`                              |
-| `tuya/adk`       | `*appaccount.Service`       | Smart-home read/control as tools (4 tools)             | `Tools`, `Client`                    |
-| `postera/adk`    | `*postera.Postarius`        | "Wake your future self" scheduling as tools (3 tools)  | `Tools`                              |
-| `zep/adk`        | a Zep `*client.Client`      | ADK session backend **and** user-graph memory backend  | `NewSessionService`, `NewMemoryService` |
-
-`gworkspace`, `tuya`, and `postera` bindings translate the client's sentinel
-errors into instructions an agent can act on (see [Error translation](#5-errors-the-model-can-act-on-not-just-report)).
-`zep/adk` is the substantial one: it implements ADK's `session.Service` over Zep
-threads with an ownership guard, a time harness, and speaker attribution, plus
-`memory.Service` over the Zep user knowledge graph.
-
----
+A Go library that plugs your clients into an agent framework.
 
 ## Install
 
-```bash
+```sh
 go get go.trueardian.com/agentkit
 ```
 
-Requires **Go 1.25+** (module `go` directive is `go 1.25.8`). Import only the
-subpackages you need; unused bindings pull in no transitive dependencies.
+## The packages
 
-Full API reference: [`pkg.go.dev/go.trueardian.com/agentkit`][godoc], or locally:
+| Package          | What it is                                                         | Provides                                | Depends on                     |
+| ---------------- | ------------------------------------------------------------------ | --------------------------------------- | ------------------------------ |
+| `zep/adk`        | Zep implementation of ADK's session and memory services.           | `session.Service`, `memory.Service`     | `github.com/getzep/zep-go/v3`  |
+| `spotify/adk`    | Search and playback control, as 11 tools.                          | `[]tool.Tool`                           | `go.trueardian.com/spotify`    |
+| `tuya/adk`       | The human's smart home, read and controlled, as 4 tools.           | `[]tool.Tool`                           | `go.trueardian.com/tuya`       |
+| `gworkspace/adk` | Gmail, Calendar and Contacts, 2 tools each.                        | `[]tool.Tool`                           | `go.trueardian.com/gworkspace` |
+| `postera/adk`    | Lets the agent wake its future self, as 3 tools.                   | `[]tool.Tool`                           | `go.trueardian.com/postera`    |
 
-```bash
-go doc ./zep/adk
-go doc ./spotify/adk
+```
+zep/adk        ──▶ zep-go     ─┐
+spotify/adk    ──▶ spotify     │
+tuya/adk       ──▶ tuya        ├─▶ and all of them ──▶ adk
+gworkspace/adk ──▶ gworkspace  │
+postera/adk    ──▶ postera    ─┘
 ```
 
----
+The layout is `<integration>/<framework>`. The clients don't know any agent framework exists, so
+they stay usable from an HTTP handler, a cron job or a CLI. The binding is the only place that knows
+both sides. Today the only framework is [Google's Agent Development Kit](https://google.github.io/adk-docs/),
+so every leaf is `adk`, and every package is named `adk` too. Alias them on import.
 
-## Quick start
+Only import what you need. Only the bindings you import end up in your binary. Below are the
+explanations and guides.
 
-Wiring the Zep binding into an ADK runner as **both** the session backend and the
-memory backend. This is the end-to-end shape; the tool bindings are a one-liner by
-comparison (`tools, err := spotifyadk.Tools(client)`).
+## `package zep/adk`
+
+So you are building an agent on ADK, and you want [Zep](https://www.getzep.com/) to hold the
+conversations and remember the human across all of them? I got you.
+
+### Sessions
+
+Every ADK session is one Zep thread, and the session ID is the thread ID. Hand your Zep client to
+`NewSessionService`:
 
 ```go
-package main
+import zepadk "go.trueardian.com/agentkit/zep/adk"
 
-import (
-	"context"
-	"fmt"
-	"os"
-
-	"github.com/getzep/zep-go/v3/client"
-	"github.com/getzep/zep-go/v3/option"
-	zep "go.trueardian.com/agentkit/zep/adk"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/runner"
-	"google.golang.org/genai"
+svc := zepadk.NewSessionService(zepClient,
+    zepadk.WithMessageHistoryLength(10),
+    zepadk.WithInstruction("temp:session-instruction"),
+    zepadk.WithTimeHarness(zepadk.StaticTZ("Asia/Jakarta")),
 )
 
-func main() {
-	zepClient := client.NewClient(option.WithAPIKey(os.Getenv("ZEP_API_KEY")))
-
-	// Session backend: history, ownership guard, time-awareness, speaker
-	// attribution. WithInstruction names the State key the ADK runner resolves
-	// into the agent's instruction — put {temp:session-instruction?} in your
-	// prompt and the binding fills it (message-format + current-time blocks).
-	svc := zep.NewSessionService(
-		zepClient,
-		zep.WithMessageHistoryLength(10),
-		zep.WithInstruction("temp:session-instruction"),
-		zep.WithTimeHarness(zep.StaticTZ("Asia/Jakarta")),
-	)
-
-	// Memory backend: user-scoped Zep knowledge graph, independent of any thread.
-	mem := zep.NewMemoryService(zepClient)
-
-	rnr, err := runner.New(runner.Config{
-		SessionService:    svc,
-		MemoryService:     mem,
-		AutoCreateSession: true, // runner calls Create for us on the first turn
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	ctx := context.Background()
-	userID := "user-456"
-	sessionID := userID // one-thread-per-user: SessionID == UserID
-
-	msg := genai.NewContentFromText("Hello! What do you know about me?", "user")
-	for event, err := range rnr.Run(ctx, userID, sessionID, msg, agent.RunConfig{}) {
-		if err != nil {
-			panic(err)
-		}
-		if event.Content != nil {
-			for _, part := range event.Content.Parts {
-				fmt.Print(part.Text)
-			}
-		}
-	}
-	fmt.Println()
-}
+rnr, err := runner.New(runner.Config{
+    // ...
+    SessionService:    svc,
+    AutoCreateSession: true,
+})
 ```
 
-Run it: `ZEP_API_KEY=… go run ./examples/zep`. The full annotated version lives in
-[`examples/zep/main.go`](examples/zep/main.go).
+`Create` makes the Zep user first if it doesn't exist yet, then the thread. `Get` loads the last
+`WithMessageHistoryLength` messages as history. Leave it at zero and `Get` only checks the thread is
+there and loads nothing. `AppendEvent` writes every turn with text in it back to the thread.
 
-**Failure paths are part of the contract.** A cross-user session request returns
-[`zep.ErrSessionOwnerMismatch`](zep/adk/session.go) — map it to HTTP 403. A nil
-client into any tool binding returns an error at wiring time, not a nil-panic on
-the first call. Details below.
+Every history message comes back with its speaker in front, like `[Ardian] hi`, and models love to
+copy that prefix into their own reply. So `WithInstruction(key)` writes a block into session state
+under that key, telling the model what the prefix is and to never write one. Put the placeholder in
+your agent instruction and the ADK runner fills it in:
 
----
+```
+~ your instruction ~
+{temp:session-instruction?}
+```
 
-## Design decisions & trade-offs
+The `?` keeps the turn alive when the block is empty. Without `WithInstruction`, nothing is written.
 
-Each decision is written as **what we did → the plausible alternative → why this
-side of it**.
+### Time
 
-### 1. `<integration>/<framework>` layout, framework in the leaf
+Your agent has no idea what time it is, or that the last message was three days ago.
+`WithTimeHarness` fixes both. The prefix becomes `[2026-10-22 09:15 Ardian]`, and the instruction
+block gains the current local time and how long it's been since the previous message, so the model
+never has to look it up or do timezone math.
 
-**Choice.** Directories are keyed by client first, framework second:
-`spotify/adk`, `zep/adk`.
-
-**Alternative.** Key by framework first (`adk/spotify`, `adk/zep`), the way many
-"adapters for X" repos are laid out.
-
-**Why.** The client is the stable axis; the framework is the axis that multiplies.
-When a second framework binding arrives, `spotify/langchaingo` slots in next to
-`spotify/adk` with zero churn to the first. Framework-first would instead scatter
-each client across sibling top-level trees, so "everything Spotify" would no longer
-be one directory. Keying by the axis that grows keeps additive change additive.
-
-### 2. Thin bindings over standalone client modules
-
-**Choice.** The clients are separate, framework-agnostic modules; this module is
-only the adapter layer on top.
-
-**Alternative.** Vendor the client logic in here, or let each client grow its own
-`ToADKTools()` method.
-
-**Why.** A client with no agent dependency stays usable from anywhere and testable
-without ADK's dependency tree — and a binding kept deliberately thin has almost no
-logic of its own to rot. The cost is one more module to version (see
-[Compatibility](#compatibility)); the benefit is that neither the client nor the
-framework has to know the binding exists. This is the ["accept interfaces, return
-structs"][proverbs] proverb applied at module scale.
-
-### 3. Narrow, consumer-defined client interfaces
-
-**Choice.** Each binding declares the *smallest* interface it needs and accepts
-that, not the concrete client. `tuya/adk.Client` lists four methods; `zep/adk`'s
-`threadClient` lists the three thread calls it makes — no more.
+The zone comes from one of two resolvers:
 
 ```go
-// tuya/adk: the binding drives exactly this surface; *appaccount.Service satisfies it.
-type Client interface {
-	Get(ctx context.Context, owner string) (appaccount.Account, error)
-	Devices(ctx context.Context, owner string, opts ...tuya.DeviceOption) ([]tuya.UserDevice, error)
-	DeviceStatus(ctx context.Context, deviceID string) ([]tuya.DataPoint, error)
-	SendCommands(ctx context.Context, deviceID string, commands []tuya.DataPoint) error
-}
+zepadk.WithTimeHarness(zepadk.StaticTZ("Asia/Jakarta"))
+
+zepadk.WithTimeHarness(zepadk.TZFromContext())
+ctx = zepadk.WithTimezone(ctx, "Asia/Jakarta") // per request, in your middleware
 ```
 
-**Alternative.** Accept the concrete `*appaccount.Service` / `*zep.client.Client`
-directly.
+`StaticTZ` with an invalid name panics, because that string is right there in your source and it's a
+bug to fix now. A bad or missing zone from context is data, so that one returns an error from `Get`.
+`WithTimeHarness(nil)` is time-aware without converting anything: timestamps stay in the zone Zep
+gave them and the current time is UTC.
 
-**Why.** Two payoffs, both idiomatic Go. Tests inject a tiny fake instead of
-standing up a real client (this is exactly why `zep/adk` reaches **81%** coverage
-against a network SDK — see [Verification](#verification)). And the interface
-documents the binding's true blast radius: a reviewer sees precisely which client
-methods it can call. The interface is defined by the *consumer* per
-[Go's interface guidance][accept-interfaces]. A compile-time
-`var _ Client = (*appaccount.Service)(nil)` assertion keeps the concrete type honest.
+Do note the harness is strict. A history message without a parseable `CreatedAt` makes `Get` fail,
+instead of quietly showing the model a message with no time on it.
 
-### 4. Fail at wiring time, not on the first call
+### Speakers
 
-**Choice.** Every `Tools(...)` constructor returns `([]adktool.Tool, error)` and
-errors immediately on a nil client:
+By default a human's turn is saved under the session's user ID. Want a real name, or a different
+Zep role? Use a speaker resolver:
 
 ```go
-func Tools(c *spotify.Client) ([]adktool.Tool, error) {
-	if c == nil {
-		return nil, errors.New("adk: Tools: client must not be nil")
-	}
-	// …
-}
+zepadk.WithSpeakerResolver(zepadk.StaticSpeaker(zepadk.Speaker{Name: "Ardian"}))
+
+zepadk.WithSpeakerResolver(zepadk.SpeakerFromContext())
+ctx = zepadk.WithSpeaker(ctx, zepadk.Speaker{Name: "Ardian"}) // per request, in your middleware
 ```
 
-**Alternative.** Return `[]adktool.Tool` alone and let a nil client nil-panic when
-the agent first invokes a tool — possibly deep in a production run.
+An empty `Role` keeps the role ADK gave the turn.
 
-**Why.** A misconfigured binding is a wiring bug, and wiring runs once at startup.
-Surfacing it there turns a 3-a.m. nil-panic mid-conversation into a boot-time error
-next to the line that caused it. `functiontool.New` already returns an error, so the
-signature carries one regardless — checking the client too costs nothing.
+`SpeakerFromContext` makes `AppendEvent` fail when the speaker is missing or has no name, so a
+forgotten middleware doesn't silently mislabel the turn.
 
-### 5. Panic for programmer errors, return for runtime errors
+### Ownership
 
-**Choice.** The split is by *who can fix it*. A bad literal in code panics; anything
-that depends on runtime state returns an error.
+A thread has to belong to the user asking for it. If it doesn't, `Get` returns
+`zepadk.ErrSessionOwnerMismatch`. Map it to a 403. If Zep doesn't report an owner at all, that
+counts as a mismatch too, because ownership it can't confirm is ownership it denies.
+
+`Create` runs the same check. With `AutoCreateSession`, the runner calls `Create` after *any* `Get`
+error, the rejected cross-user one included, and creating someone else's thread on top of theirs is
+not a thing that should be left to Zep to decide. An empty user ID is not checked at all, so your own
+system tooling can still reach every thread.
+
+Function calls, function responses and empty model turns carry no text, so they are never written
+to Zep. They are still kept in memory, so the ADK flow loop sees them. A turn that is nothing but
+invisible characters like `U+200B` counts as empty too.
+
+### Memory
 
 ```go
-zep.StaticTZ("Not/AZone")           // panics: an invalid constant is a source bug
-zep.WithSpeakerResolver(nil)        // panics: a resolver must come from a factory
-zep.TZFromContext() // + missing ctx value → returns an error at request time
+mem := zepadk.NewMemoryService(zepClient)
 ```
 
-**Alternative.** Return errors uniformly, forcing `err` handling on constructors
-that can only fail if you typed a constant wrong.
+`SearchMemory` searches the user's Zep knowledge graph, independent of any thread, and hands back
+Zep's context block as a single memory. `AddSessionToMemory` does nothing, because every turn is
+already in a Zep thread and Zep builds the graph from those by itself. Register
+`preloadmemorytool.New()` on your agent and the memory gets into every request.
 
-**Why.** `StaticTZ("Asia/Jakarta")` failing is unthinkable at runtime — the string
-is right there in the source, so an invalid one is a bug to fix now, and
-[`time.LoadLocation`][loadlocation]-style panics match how the standard library
-treats `regexp.MustCompile` and `template.Must`. But a timezone pulled from a
-request context is *data*, and bad data is an expected runtime condition, so that
-path returns an error the caller handles. Same concept, opposite handling, decided
-by whether a human editing the file — or a live request — is the source.
+## `package spotify/adk`
 
-### 6. Errors the model can act on, not just report
-
-**Choice.** Bindings translate the client's sentinel errors into agent-facing
-guidance, and pass everything else through untouched.
+So you want your agent to put music on? Hand it your `*spotify.Client`:
 
 ```go
-func forAgent(err error) error {
-	switch {
-	case errors.Is(err, spotify.ErrNoActiveDevice):
-		return errors.New("no active Spotify device — ask the human to open Spotify " +
-			"somewhere, or check my_devices, then try again")
-	// …
-	default:
-		return err // unrecognized errors are never masked
-	}
-}
+import spotifyadk "go.trueardian.com/agentkit/spotify/adk"
+
+tools, err := spotifyadk.Tools(spotifyClient)
 ```
 
-**Alternative.** Surface raw client errors to the model, or map them to opaque
-codes.
+That hands your agent `search_tracks`, `my_playlists`, `playlist_tracks`, `now_playing`,
+`my_devices`, `play`, `transfer_playback`, `pause`, `skip_next`, `skip_previous` and `set_volume`.
+The prompting is already written, including the part where the model finds an idle device and plays
+on it, instead of giving up the moment nothing is active.
 
-**Why.** The consumer of a tool error here is a language model deciding its next
-move, and `ErrNoActiveDevice` tells it nothing actionable. Rewriting the *known*
-sentinels into "here's what to do next" turns a dead end into a recovery path,
-while the `default` branch keeps unrecognized failures verbatim so real bugs are
-never smoothed over into a friendly lie. `errors.Is` (not string matching) does
-the recognition, so it survives error wrapping.
+## `package tuya/adk`
 
-### 7. View types as the model-facing JSON contract
-
-**Choice.** No client type is ever handed to the framework directly. Each binding
-defines its own `xView` structs with explicit JSON tags and a `toXView` converter.
-
-**Alternative.** Serialize the client's structs straight to the tool output.
-
-**Why.** The JSON an agent sees is a contract with the *model*, and it should be
-shaped for the model — stable field names, `omitempty` where "absent" is
-meaningful (`playbackView.Track` drops out when nothing is loaded, so `playing`
-alone answers "is anything sounding?") — not accidentally coupled to whatever the
-client SDK happens to expose this version. A client refactor can't silently reshape
-the prompt, and the view sits right next to its converter so the mapping is one
-scroll to audit. Per [CLAUDE.md](CLAUDE.md), these domain views stay package-level;
-the throwaway args/output wrappers are declared *inside* the tool constructor.
-
-### 8. Fail-closed session ownership (`zep/adk`)
-
-**Choice.** A thread must provably belong to the requesting user, on both the read
-and the auto-create path. When Zep can't confirm an owner, access is **denied**.
+So you want your agent to turn the lights off? Hand it your `*appaccount.Service`:
 
 ```go
-func verifyThreadOwner(resp *zep.MessageListResponse, expectedUserID string) error {
-	if expectedUserID == "" { // no identity → internal/test caller, not gated
-		return nil
-	}
-	if derefOrEmpty(resp.GetUserID()) != expectedUserID {
-		return ErrSessionOwnerMismatch // unconfirmable owner counts as a mismatch
-	}
-	return nil
-}
+import tuyaadk "go.trueardian.com/agentkit/tuya/adk"
+
+tools, err := tuyaadk.Tools(app)
 ```
 
-**Alternative.** Trust the session id, or let Zep's server decide what happens when
-one user opens another's thread.
+That hands your agent `get_account`, `list_devices`, `device_status` and `send_commands`.
+`list_devices` comes with the human's own names for every channel of a multi-gang switch, so "the
+kitchen light" finds `switch_2`. `Tools` takes a `tuyaadk.Client`, the four methods it actually
+calls, so a fake is all you need in a test.
 
-**Why.** With `AutoCreateSession`, the ADK runner calls `Create` on *any* `Get`
-error — including a rejected cross-user read — so without an explicit guard a
-denied request would fall through to `thread.Create` against someone else's thread,
-whose server-side outcome is undefined. The binding decides the outcome itself
-rather than depending on Zep: an existing thread must match the requester; an
-unknown owner is treated as a mismatch, not waved through. This is the security
-path, so it fails **closed**. It is covered by tests for the match, mismatch,
-missing-owner, verify-only, and auto-create-foreign-thread cases.
+## `package gworkspace/adk`
 
-### 9. Resolvers and harnesses instead of ad-hoc options (`zep/adk`)
+So you want your agent to read mail, check the calendar, or find someone's email address? One call
+per service, each taking its own `*gworkspace` client:
 
-**Choice.** Two named patterns carry the configuration surface. A **Resolver**
-(`TZResolver`, `SpeakerResolver`) is an opaque single-value source built only via
-fluent factories (`StaticTZ`, `TZFromContext`). A **Harness** (`timeHarness`) is an
-optional read-path feature with two distinct nil levels.
+```go
+import gworkspaceadk "go.trueardian.com/agentkit/gworkspace/adk"
 
-**Alternative.** A pile of `With…` options and exported config structs the caller
-fills in field by field.
-
-**Why.** Naming the *kind* of thing makes misuse hard and reads honestly. A
-resolver's factory name states what it yields (`StaticTZ` → a timezone), and its
-unexported function field means a caller literally cannot build a broken one —
-`&TZResolver{}` won't compile past the option, which panics. A harness backed by a
-`*config` pointer distinguishes *disabled* (`nil`) from *enabled-with-default*
-(`WithTimeHarness(nil)`, meaning "be time-aware but don't convert zones") — a
-plain value couldn't express both. The full rationale is written down in
-[CLAUDE.md](CLAUDE.md#naming), which is itself part of the deliberate record.
-
----
-
-## Design principles
-
-Cross-cutting rules every package obeys — the reason the bindings look like one
-author wrote them on one day:
-
-- **Standard library for the core.** `zep/adk`'s logic — time formatting, Unicode
-  handling, string building, concurrency, iteration — uses only `time`, `unicode`,
-  `strings`, `sync`, `iter`, `errors`, `fmt`, `context`. Third-party imports are the
-  client SDK and the framework, nothing else.
-- **Modern Go, used plainly.** `iter.Seq`/`iter.Seq2` (Go 1.23) back the session's
-  `State.All()` and `Events.All()` rather than callback slices.
-- **Accept interfaces, return structs** — at call sites and at module boundaries.
-- **Compile-time assertions guard every interface claim** — `var _ I = (*T)(nil)`
-  sits next to the type it protects.
-- **Read-optimized file ordering** — dependencies appear just above their first
-  use, documented and enforced by [CLAUDE.md](CLAUDE.md).
-
----
-
-## Owned nuances
-
-Small deliberate choices a sharp reviewer will spot — documented so intent isn't
-mistaken for oversight:
-
-- **`formatElapsed` is always-plural** ("1 minutes"). Branching singular/plural
-  buys grammar an LLM already tolerates; the simpler function is the deliberate
-  trade. ([session.go](zep/adk/session.go))
-- **Blank-message filtering counts invisible runes as blank.** A model asked for an
-  "empty" turn may emit `U+200B`, `U+200E`, or `U+FEFF`; `unicode.IsSpace` alone
-  would let those pollute the thread. `isBlank` also skips Unicode category `Cf` and
-  control runes, keeping the invariant *content-driven*: no visible content, no Zep
-  message. Covered by a table test across all these runes.
-- **`temp:` state scope is refreshed every `Get`.** Time and message-format blocks
-  are rebuilt per request by design, so "current time" is actually current.
-
----
-
-## Non-goals
-
-Boundaries are deliberate; naming them is part of the design:
-
-- **Not the clients.** This module contains no Spotify/Tuya/Zep/Workspace transport
-  logic — that lives in each client's own module. `agentkit` only binds.
-- **Not a model provider.** Implementing `model.LLM` for a given LLM is outside the
-  tool/session/memory scope of this toolkit; ADK ships its own model packages
-  (`google.golang.org/adk/model/gemini`, `.../apigee`), and a custom `model.LLM` is
-  a small standalone type. Keeping providers out keeps this module about *bindings*.
-- **Not authentication or tenant isolation.** The `zep/adk` ownership guard is a
-  fail-closed backstop, not an auth layer, and `postera`'s identity scoping is
-  filtering, not access control. Authenticate and authorize above this module.
-- **Not `List`/`Delete` for Zep sessions.** `SessionService.List`/`Delete` are
-  intentional no-ops: threads are owned and enumerated in Zep, not through the ADK
-  session surface. The methods exist only to satisfy the interface.
-
----
-
-## Verification
-
-Every claim above is backed by checks you can re-run. Numbers below were observed
-with **Go 1.25.11** this session:
-
-```bash
-go build ./...     # ok
-go vet ./...       # clean, no diagnostics
-go test ./... -cover
+gmailTools, err := gworkspaceadk.GmailTools(gmail)          // read_messages, send_email
+calendarTools, err := gworkspaceadk.CalendarTools(calendar) // get_events, add_event
+contactTools, err := gworkspaceadk.ContactTools(contacts)   // get_contacts, add_contact
 ```
 
-| Package          | Tests | Coverage | Notes                                                                 |
-| ---------------- | :---: | :------: | --------------------------------------------------------------------- |
-| `zep/adk`        |  ✅   | **81.4%** | Ownership matrix, time harness, speaker attribution, blank filtering  |
-| `postera/adk`    |  ✅   | **87.1%** | All three tools end-to-end via fakes + the localization-doc branch    |
-| `spotify/adk`    |  ✅   | 49.0%    | `httptest`-driven flow through the real client; error translation     |
-| `tuya/adk`       |  ✅   | 28.0%    | Registration, tool names, error translation                           |
-| `gworkspace/adk` |  ✅   | 25.8%    | Registration, tool names, interface-satisfaction assertions           |
+Same as Tuya, each takes a small interface of exactly the methods it calls.
 
-**Honest gaps.** `gworkspace/adk` and `tuya/adk` test tool registration, the
-interface contracts, and error translation, but not the get/add handler bodies
-end-to-end — those are thin passthroughs to the client, and the client owns their
-tests. `spotify/adk` shows the higher bar worth reaching (a rewrite transport drives
-the real client against fixture responses); extending that pattern to the other tool
-bindings is the natural next step. `zep/adk` — where the real logic lives — is the
-one held to 80%+.
+## `package postera/adk`
 
----
+So you want your agent to come back to things on its own? Hand it your `*postera.Postarius`:
 
-## Compatibility
+```go
+import posteraadk "go.trueardian.com/agentkit/postera/adk"
 
-| Dependency                       | Version   | Role                              |
-| -------------------------------- | --------- | --------------------------------- |
-| `google.golang.org/adk`          | v1.2.0    | Target agent framework            |
-| `google.golang.org/genai`        | v1.54.0   | Content/part types ADK speaks     |
-| `github.com/getzep/zep-go/v3`    | v3.20.0   | Zep client (session + memory)     |
-| `go.trueardian.com/gworkspace`   | v0.8.0    | Workspace client                  |
-| `go.trueardian.com/spotify`      | v0.10.0   | Spotify client                    |
-| `go.trueardian.com/tuya`         | v0.10.0   | Tuya client                       |
-| `go.trueardian.com/postera`      | v0.23.0   | Prospective-memory client         |
-
-Because each binding is independent, importing (say) only `spotify/adk` links only
-the Spotify and ADK trees — the Zep and Workspace SDKs stay out of your binary.
-
----
-
-## Layout
-
-```
-agentkit/
-├── gworkspace/adk/   Gmail, Calendar, Contacts → ADK tools
-├── spotify/adk/      Spotify search + playback → ADK tools
-├── tuya/adk/         Tuya smart-home read/control → ADK tools
-├── postera/adk/      Future-self scheduling → ADK tools
-├── zep/adk/          Zep → ADK session.Service + memory.Service
-│   ├── session.go    SessionService: history, ownership, time harness, speakers
-│   └── memory.go     MemoryService: user-graph search
-├── examples/zep/     Runnable end-to-end wiring
-└── CLAUDE.md         The ordering & naming rules this codebase is held to
+tools, err := posteraadk.Tools(postarius)
 ```
 
----
+That hands your agent `wake_future_self`, `list_upcoming_wakes` and `cancel_upcoming_wake`. If the
+`Postarius` resolves the timezone from context, the tool tells the model no conversion is needed,
+and every time comes back in the zone the agent wrote it in.
+
+## Every tool binding
+
+They all work the same way.
+
+The ADK user ID is the owner. Every tool passes `toolCtx.UserID()` to the client as the owner, so
+run the agent under the same ID your client keeps the human's tokens or Tuya link under.
+
+They fail at wiring time. A nil client returns an error from `Tools`, at startup next to the line
+that caused it, instead of a nil-panic in the middle of a conversation.
+
+The errors are written for the model. `spotify.ErrNoActiveDevice` means nothing to a model deciding
+what to do next, so the errors the binding knows (not connected, not linked, no active device,
+Premium required, rate limited) are rewritten into what to do about them. Anything else passes
+through untouched, so a real bug never gets smoothed over into a friendly lie.
+
+The JSON is its own contract. No client type is handed to the model directly. Each binding has its
+own view types, so a client refactor can't silently reshape what the model sees.
+
+## What this library doesn't do
+
+- **Authentication or tenant isolation.** The ownership check in `zep/adk` is a backstop, not an
+  auth layer. Who the user is gets decided above this library, at your HTTP or gRPC layer.
+- **List or delete Zep sessions.** `SessionService.List` and `Delete` do nothing, and only exist to
+  satisfy the interface. Threads are managed in Zep.
+- **Model providers.** ADK ships its own, and a custom `model.LLM` is a small type of its own. This
+  library is about tools, sessions and memory.
+- **Any framework other than ADK.** Not yet. The layout already leaves room: a `spotify/langchaingo`
+  would sit right next to `spotify/adk` without moving anything. Pull requests are welcome, though
+  I'm fairly strict about how code is written here (see [CLAUDE.md](CLAUDE.md)), so expect me to
+  refactor yours before merging.
 
 ## License
 
 [MIT](LICENSE) © 2026 Ardian
-
-[adk]: https://google.github.io/adk-docs/
-[godoc]: https://pkg.go.dev/go.trueardian.com/agentkit
-[proverbs]: https://go-proverbs.github.io/
-[accept-interfaces]: https://go.dev/wiki/CodeReviewComments#interfaces
-[loadlocation]: https://pkg.go.dev/time#LoadLocation
